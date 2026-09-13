@@ -1,0 +1,41 @@
+# fly.toml — deploy MRL Quotation to Fly.io
+# Quick start:
+#   1. Install flyctl:  https://fly.io/docs/hands-on/install-flyctl/
+#   2. fly auth login
+#   3. fly launch --copy-config --no-deploy   (edit app name below first)
+#   4. fly volume create mrl_data --size 1 --region <same as primary_region>
+#   5. fly secrets set SESSION_SECRET=$(openssl rand -hex 32)
+#   6. fly deploy
+#
+# Change `app` to your own unique app name before launching.
+
+app = "mrl-quotation"    # MUST be globally unique. Change before first `fly launch`, or let `fly launch` prompt you.
+primary_region = "bom"   # Mumbai — lowest latency from India. Alternatives: sin (Singapore), sea (Seattle)
+kill_signal = "SIGINT"
+kill_timeout = 5
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  NODE_ENV = "production"
+  DATA_DIR = "/data"
+
+# Persistent SQLite storage — protects data across deploys/restarts
+[[mounts]]
+  source = "mrl_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = true      # scales to zero when idle to save credits
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512

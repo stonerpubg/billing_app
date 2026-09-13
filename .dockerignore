@@ -1,0 +1,12 @@
+node_modules
+dist
+release
+data
+.git
+.gitignore
+.claude
+*.log
+Dockerfile
+.dockerignore
+README.md
+LAST_EDIT.md

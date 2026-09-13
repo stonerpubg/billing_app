@@ -1,0 +1,44 @@
+# Render.com blueprint — deploy MRL GROUP OF COMPANIES as a web service.
+#
+# ⚠ IMPORTANT — READ BEFORE USING ⚠
+# ─────────────────────────────────
+# Render's FREE tier gives you NO persistent disk. Every restart, redeploy, or
+# 15-minute idle sleep WIPES your SQLite database back to the seed state.
+# This means every quotation, invoice, payroll run, employee, attendance mark,
+# and income entry you enter will vanish periodically. NOT suitable for real
+# business data — only for a demo / evaluation.
+#
+# For real production use with persistence, either:
+#   1. Follow DEPLOY_FLY.md instead — Fly.io free tier includes a 1 GB
+#      persistent volume that survives restarts.
+#   2. Upgrade Render to the Starter plan ($7/mo) which includes a persistent
+#      disk — then uncomment the `disk:` section below.
+
+services:
+  - type: web
+    name: mrl-group-of-companies
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free                    # change to "starter" for $7/mo persistent disk
+    region: singapore             # closest Render region to India
+    branch: main                  # deploy from this git branch
+    healthCheckPath: /            # simple ping
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 8080
+      - key: DATA_DIR
+        value: /data
+      - key: SESSION_SECRET
+        generateValue: true       # Render generates a random 32-byte secret on first deploy
+
+    # ─── Persistent disk (PAID PLAN ONLY) ───────────────────────────────────
+    # Uncomment this block AND change `plan: free` → `plan: starter` above to
+    # get a 1 GB persistent volume mounted at /data (where mrl.sqlite lives).
+    # Without this, data is wiped on every restart.
+    #
+    # disk:
+    #   name: mrl-data
+    #   mountPath: /data
+    #   sizeGB: 1

@@ -1,0 +1,22 @@
+node_modules/
+dist/
+release/
+.vite/
+*.log
+.DS_Store
+data/
+# Env / secrets — never commit
+.env
+.env.*
+!.env.example
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+# OS junk
+Thumbs.db
+desktop.ini
+# SQLite journal / WAL / shm files if they escape data/
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal

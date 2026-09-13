@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir \"d:\\\\New folder \\(2\\)\" /b)",
+      "Bash(npm --version)",
+      "Bash(node --check electron/main.js)",
+      "Bash(node --check electron/preload.js)",
+      "Bash(node --check electron/database.js)",
+      "Bash(node --check electron/pdf-generator.js)",
+      "Bash(node --check server/index.js)",
+      "Bash(timeout 8 npx cross-env NODE_ENV=development node server/index.js)",
+      "Bash(timeout 6 npx cross-env NODE_ENV=development node server/index.js)",
+      "Bash(node \"C:/Users/tamil_atl/AppData/Local/Temp/mrl_patch.js\")",
+      "Bash(node \"C:/Users/tamil_atl/AppData/Local/Temp/mrl_mock_patch.js\")",
+      "Bash(node -e \"const db = require\\('./electron/database'\\); console.log\\('has listInvoices:', typeof db.listInvoices, 'has dashboardStats:', typeof db.dashboardStats\\);\")"
+    ]
+  }
+}
