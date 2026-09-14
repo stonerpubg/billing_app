@@ -22,7 +22,7 @@ const BigTile = ({ label, value, hint, tone, to, icon }) => {
         <div className="text-xs uppercase tracking-wide font-semibold text-slate-500 truncate">{label}</div>
         {icon && <span className={'text-xl shrink-0 ' + tone}>{icon}</span>}
       </div>
-      <div className={`mt-2 text-xl sm:text-2xl lg:text-3xl font-bold break-all ${tone}`}>{value}</div>
+      <div className={`mt-2 text-lg sm:text-xl md:text-2xl font-bold tabular-nums whitespace-nowrap overflow-hidden text-ellipsis ${tone}`}>{value}</div>
       {hint && <div className="text-xs text-slate-500 mt-1 truncate">{hint}</div>}
     </div>
   );
@@ -257,8 +257,8 @@ export default function Dashboard() {
             label="Total outstanding"
             value={inr(stats.receivables.total_outstanding)}
             tone="text-amber-700"
-            to="/invoices"
-            hint="Across all customers"
+            to="/reports/receivables"
+            hint="Invoices + billed quotes + income balances"
           />
           <div className="card card-body">
             <div className="text-[10px] uppercase font-semibold text-emerald-700">0 – 30 days</div>

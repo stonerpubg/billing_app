@@ -149,8 +149,8 @@ export default function Users() {
         </div>
       </div>
 
-      <Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit user' : 'Add user'}>
-        <div className="space-y-3">
+      <Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit user' : 'Add user'} size="lg">
+        <div className="p-5 space-y-4">
           <div>
             <label className="label">Username</label>
             <input
@@ -217,8 +217,8 @@ export default function Users() {
         </div>
       </Modal>
 
-      <Modal open={pwOpen} onClose={() => setPwOpen(false)} title={`Reset password — ${pwForm.username}`}>
-        <div className="space-y-3">
+      <Modal open={pwOpen} onClose={() => setPwOpen(false)} title={`Reset password — ${pwForm.username}`} size="sm">
+        <div className="p-5 space-y-4">
           <div>
             <label className="label">New password</label>
             <input

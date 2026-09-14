@@ -1545,7 +1545,28 @@ function receivablesReport() {
         ORDER BY q.quote_date ASC`
     )
     .all();
-  const rows = [...invoiceRows, ...quoteRows]
+  // Also pull free-form income entries where the customer hasn't paid in full yet.
+  // These are receivables just like an unpaid invoice — the money is owed to us.
+  const incomeRows = db
+    .prepare(
+      `SELECT inc.id,
+              'INC-' || inc.id AS number,
+              inc.customer_id,
+              COALESCE(c.name, inc.customer_name, '(no customer)') AS customer_name,
+              inc.income_date AS doc_date,
+              NULL AS due_date,
+              inc.amount AS grand_total,
+              inc.received_amount AS paid_total,
+              (inc.amount - inc.received_amount) AS balance,
+              'Pending' AS status,
+              'income' AS kind
+         FROM incomes inc
+         LEFT JOIN customers c ON c.id = inc.customer_id
+        WHERE (inc.amount - inc.received_amount) > 0
+        ORDER BY inc.income_date ASC`
+    )
+    .all();
+  const rows = [...invoiceRows, ...quoteRows, ...incomeRows]
     // Add invoice_number alias for backward compat with any callers using `invoice_number`
     .map((r) => ({ ...r, invoice_number: r.number, invoice_date: r.doc_date }));
   const today = new Date();
@@ -2185,6 +2206,27 @@ function cashflowReport(filters = {}) {
     debit: 0,
   }));
 
+  // Free-form incomes (no invoice / no quote) — count `received_amount`, not the
+  // headline `amount`, since that's the actual cashflow.
+  db.prepare(
+    `SELECT inc.income_date AS date, inc.received_amount AS amount, inc.mode, inc.reference,
+            inc.notes, COALESCE(c.name, inc.customer_name, '—') AS party
+       FROM incomes inc
+       LEFT JOIN customers c ON c.id = inc.customer_id
+      WHERE inc.received_amount > 0
+        AND inc.income_date >= ? AND inc.income_date <= ?`
+  ).all(from, to).forEach((r) => rows.push({
+    date: r.date,
+    kind: 'IN',
+    source: 'Income',
+    party: r.party,
+    description: r.notes || '',
+    mode: r.mode || '',
+    reference: r.reference || '',
+    credit: +r.amount.toFixed(2),
+    debit: 0,
+  }));
+
   db.prepare(
     `SELECT expense_date AS date, amount, category, vendor_name, description, payment_mode, reference
        FROM expenses WHERE expense_date >= ? AND expense_date <= ?`
@@ -2273,7 +2315,23 @@ function salesReport(filters = {}) {
       WHERE q.status = 'Billed' AND q.quote_date >= ? AND q.quote_date <= ?
         AND NOT EXISTS (SELECT 1 FROM invoices i WHERE i.quotation_id = q.id)`
   ).all(from, to);
-  const rows = [...invoiceRows, ...quoteRows].sort((a, b) => a.date.localeCompare(b.date));
+  // Free-form incomes count as sales too — they represent revenue booked without
+  // going through an invoice/quotation (cash jobs, direct bank credits, etc.).
+  const incomeRows = db.prepare(
+    `SELECT 'INC-' || inc.id AS number, inc.income_date AS date,
+            COALESCE(c.name, inc.customer_name, '(no customer)') AS customer_name,
+            COALESCE(inc.notes, 'Income') AS subject,
+            inc.amount AS grand_total, inc.received_amount AS paid_total,
+            (inc.amount - inc.received_amount) AS balance,
+            CASE WHEN inc.received_amount >= inc.amount THEN 'Paid'
+                 WHEN inc.received_amount > 0 THEN 'Partial'
+                 ELSE 'Pending' END AS status,
+            'income' AS kind
+       FROM incomes inc
+       LEFT JOIN customers c ON c.id = inc.customer_id
+      WHERE inc.income_date >= ? AND inc.income_date <= ?`
+  ).all(from, to);
+  const rows = [...invoiceRows, ...quoteRows, ...incomeRows].sort((a, b) => a.date.localeCompare(b.date));
   const total = rows.reduce((s, r) => s + r.grand_total, 0);
   const received = rows.reduce((s, r) => s + r.paid_total, 0);
   const outstanding = rows.reduce((s, r) => s + r.balance, 0);
@@ -2596,6 +2654,10 @@ function profitLossReport(filters = {}) {
        WHERE expense_date >= ? AND expense_date <= ? GROUP BY category ORDER BY total DESC`
     )
     .all(from, to);
+  // Salary paid out in the period reduces P&L just like operating expenses do.
+  const salary = db
+    .prepare('SELECT COALESCE(SUM(paid_amount), 0) AS s FROM payroll_entries WHERE paid_date IS NOT NULL AND paid_date >= ? AND paid_date <= ?')
+    .get(from, to).s;
   return {
     period: { from, to },
     income: +income.toFixed(2),
@@ -2603,7 +2665,8 @@ function profitLossReport(filters = {}) {
     outstanding: +outstanding.toFixed(2),
     expense: +expense.toFixed(2),
     extra_expense: +extraExpense.toFixed(2),
-    net: +(income - expense).toFixed(2),
+    salary: +salary.toFixed(2),
+    net: +(income - expense - salary).toFixed(2),
     byExpenseCategory: byExpenseCat,
   };
 }
