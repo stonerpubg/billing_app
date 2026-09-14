@@ -474,6 +474,12 @@ function seedDefaults() {
     ).run('user', user.hash, user.salt, 'user');
   }
 
+  // Fast path: once the settings block is seeded we can skip 100+ INSERT OR
+  // IGNORE round-trips on every boot. On Turso this cuts startup from ~60 s
+  // to ~1 s. Threshold is set well below the seeded-default count.
+  const settingsCount = db.prepare('SELECT COUNT(*) AS c FROM settings').get().c;
+  if (settingsCount > 50) return;
+
   const seedSetting = (key, value) => {
     db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)').run(key, value);
   };
