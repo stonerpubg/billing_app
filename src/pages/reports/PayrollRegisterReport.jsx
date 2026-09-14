@@ -64,6 +64,17 @@ export default function PayrollRegisterReport() {
             ),
           },
         ],
+        // PDF-safe mirror of `totals`: JSX doesn't survive JSON.stringify (circular refs
+        // via React fiber/context internals), so the last cell is flattened to plain text.
+        pdfTotals: {
+          cells: [
+            { text: 'TOTAL', align: 'right', colSpan: 5 },
+            { text: inr(data.total_gross), align: 'right' },
+            { text: inr(data.total_advance_deducted), align: 'right' },
+            { text: inr(data.total_net), align: 'right' },
+            { text: `Paid ${inr(data.total_paid)} · Pending ${inr(data.total_pending)}`, align: 'left' },
+          ],
+        },
       })}
     />
   );

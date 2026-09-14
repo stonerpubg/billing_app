@@ -20,3 +20,10 @@ desktop.ini
 *.sqlite-journal
 *.sqlite-shm
 *.sqlite-wal
+# Local test / scratch directories
+tmp-turso-*/
+mrl-snap.sqlite
+mrl_snap.sqlite
+*.sqlite-info
+test-sync.sqlite
+tmp-replica.sqlite

@@ -59,7 +59,10 @@ function safe(s) {
 // get the placeholder glyph ("1"/box) that we saw in reports.
 function pdfSafe(s) {
   if (s == null) return '';
-  return String(s).replace(/₹/g, 'Rs.').replace(/ /g, ' ');
+  return String(s)
+    .replace(/₹/g, 'Rs.')
+    .replace(/[←→↔➔➜]/g, '-')
+    .replace(/ /g, ' ');
 }
 
 function numberToWordsIndian(num) {

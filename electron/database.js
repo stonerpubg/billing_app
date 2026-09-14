@@ -1,7 +1,10 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
-const Database = require('better-sqlite3');
+// SWAPPED: better-sqlite3 replaced with sync-wrapped libsql client (see electron/db.js).
+// This gives us: local SQLite for dev, embedded replica synced with Turso for prod.
+// All existing prepare().get()/.all()/.run() and db.transaction() calls work unchanged.
+const dbDriver = require('./db');
 
 let db;
 let userDataDir = null;
@@ -37,7 +40,8 @@ function init(dataDir) {
   // dataDir is required — Electron passes app.getPath('userData'), server passes its data dir
   if (!dataDir) throw new Error('database.init(dataDir): dataDir is required');
   userDataDir = dataDir;
-  db = new Database(dbPath());
+  db = dbDriver.open(dataDir);
+  // pragma calls are no-ops on libsql (it manages WAL / foreign_keys internally)
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
 

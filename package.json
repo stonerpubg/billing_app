@@ -25,11 +25,13 @@
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
+    "@libsql/client": "^0.18.0",
     "better-sqlite3": "^11.3.0",
     "better-sqlite3-session-store": "^0.1.0",
     "call-bind-apply-helpers": "^1.0.1",
     "compression": "^1.8.1",
     "date-fns": "^3.6.0",
+    "deasync": "^0.1.31",
     "dunder-proto": "^1.0.1",
     "electron-store": "^8.2.0",
     "es-define-property": "^1.0.1",
@@ -42,8 +44,8 @@
     "get-proto": "^1.0.1",
     "gopd": "^1.2.0",
     "has-symbols": "^1.1.0",
-    "helmet": "^8.3.0",
     "hasown": "^2.0.2",
+    "helmet": "^8.3.0",
     "math-intrinsics": "^1.1.0",
     "multer": "^2.3.0",
     "pdfjs-dist": "^5.6.205",

@@ -1,44 +1,34 @@
 # Render.com blueprint — deploy MRL GROUP OF COMPANIES as a web service.
 #
-# ⚠ IMPORTANT — READ BEFORE USING ⚠
-# ─────────────────────────────────
-# Render's FREE tier gives you NO persistent disk. Every restart, redeploy, or
-# 15-minute idle sleep WIPES your SQLite database back to the seed state.
-# This means every quotation, invoice, payroll run, employee, attendance mark,
-# and income entry you enter will vanish periodically. NOT suitable for real
-# business data — only for a demo / evaluation.
+# Data persistence is handled by Turso (a hosted libSQL/SQLite database).
+# Every write is replicated to Turso within seconds, so restarts, redeploys,
+# and Render's free-tier idle sleep never lose data.
 #
-# For real production use with persistence, either:
-#   1. Follow DEPLOY_FLY.md instead — Fly.io free tier includes a 1 GB
-#      persistent volume that survives restarts.
-#   2. Upgrade Render to the Starter plan ($7/mo) which includes a persistent
-#      disk — then uncomment the `disk:` section below.
+# Before first deploy:
+#   1. Create a Turso database (see DEPLOY_RENDER.md).
+#   2. In the Render dashboard, set the TURSO_URL and TURSO_AUTH_TOKEN env
+#      vars for this service (they are marked `sync: false` below so they
+#      are NOT committed to git and are edited in the dashboard only).
 
 services:
   - type: web
     name: mrl-group-of-companies
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: free                    # change to "starter" for $7/mo persistent disk
+    plan: free
     region: singapore             # closest Render region to India
-    branch: main                  # deploy from this git branch
-    healthCheckPath: /            # simple ping
+    branch: main
+    healthCheckPath: /
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
         value: 8080
       - key: DATA_DIR
-        value: /data
+        value: /data              # embedded-replica cache file lives here
       - key: SESSION_SECRET
         generateValue: true       # Render generates a random 32-byte secret on first deploy
-
-    # ─── Persistent disk (PAID PLAN ONLY) ───────────────────────────────────
-    # Uncomment this block AND change `plan: free` → `plan: starter` above to
-    # get a 1 GB persistent volume mounted at /data (where mrl.sqlite lives).
-    # Without this, data is wiped on every restart.
-    #
-    # disk:
-    #   name: mrl-data
-    #   mountPath: /data
-    #   sizeGB: 1
+      - key: TURSO_URL
+        sync: false               # set in Render dashboard: libsql://<db>.turso.io
+      - key: TURSO_AUTH_TOKEN
+        sync: false               # set in Render dashboard: eyJ...

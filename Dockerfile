@@ -14,8 +14,10 @@ RUN npm ci --ignore-scripts
 
 COPY . .
 
-# Rebuild native modules for Node (default) so better-sqlite3 works in the runtime
-RUN npm rebuild better-sqlite3
+# Rebuild native modules for Node (default) — better-sqlite3 (session store)
+# and deasync (sync wrapper around libsql). libsql's own prebuilt is a plain
+# .node file pulled in via npm's optionalDependencies, no rebuild needed.
+RUN npm rebuild better-sqlite3 deasync
 
 # Build the Vite frontend into dist/
 RUN npm run build:vite
@@ -35,9 +37,10 @@ COPY --from=build /app/electron ./electron
 COPY --from=build /app/server ./server
 COPY --from=build /app/package.json ./package.json
 
-# Persistent data lives here — mount a volume to /data in production
+# Local libSQL embedded-replica cache lives here. The authoritative copy is in
+# Turso, so /data is a cache, not primary storage. Render's free tier wipes
+# this on restart; libSQL just re-hydrates from Turso on next boot.
 RUN mkdir -p /data
-VOLUME ["/data"]
 
 EXPOSE 8080
 
