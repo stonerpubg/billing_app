@@ -30,6 +30,12 @@ ENV NODE_ENV=production
 ENV PORT=8080
 ENV DATA_DIR=/data
 
+# libsql's Rust binding uses the OS trust store for TLS to Turso, so the
+# runtime image needs ca-certificates even though we don't need any build tools.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy only what's needed to run
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
