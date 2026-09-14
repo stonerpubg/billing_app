@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './context/AuthContext.jsx';
 import Layout from './components/Layout.jsx';
 import Login from './pages/Login.jsx';
@@ -34,6 +34,22 @@ import EmployeeDetail from './pages/EmployeeDetail.jsx';
 import Attendance from './pages/Attendance.jsx';
 import Leaves from './pages/Leaves.jsx';
 import Payroll from './pages/Payroll.jsx';
+import Users from './pages/Users.jsx';
+import { hasPageAccess } from './utils/pagePermissions.js';
+
+function RequirePageAccess({ children }) {
+  const { user } = useAuth();
+  const location = useLocation();
+  if (!hasPageAccess(user, location.pathname)) {
+    return (
+      <div className="p-8 text-center text-slate-500">
+        <div className="text-lg font-semibold text-red-600 mb-2">Access denied</div>
+        <div className="text-sm">You don't have permission to view this page. Ask an admin to grant access.</div>
+      </div>
+    );
+  }
+  return children;
+}
 
 function RequireAuth({ children }) {
   const { isAuthenticated, isReady } = useAuth();
@@ -85,19 +101,19 @@ export default function App() {
           <RequireAuth>
             <Layout>
               <Routes>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/quotations" element={<Quotations />} />
-                <Route path="/quotations/new" element={<QuotationEditor />} />
-                <Route path="/quotations/:id/edit" element={<QuotationEditor />} />
-                <Route path="/quotations/:id" element={<QuotationView />} />
-                <Route path="/invoices" element={<Invoices />} />
-                <Route path="/invoices/new" element={<InvoiceEditor />} />
-                <Route path="/invoices/:id/edit" element={<InvoiceEditor />} />
-                <Route path="/invoices/:id" element={<InvoiceView />} />
-                <Route path="/expenses" element={<Expenses />} />
-                <Route path="/income" element={<Income />} />
-                <Route path="/customers" element={<Customers />} />
-                <Route path="/reports" element={<ReportsIndex />} />
+                <Route path="/" element={<RequirePageAccess><Dashboard /></RequirePageAccess>} />
+                <Route path="/quotations" element={<RequirePageAccess><Quotations /></RequirePageAccess>} />
+                <Route path="/quotations/new" element={<RequirePageAccess><QuotationEditor /></RequirePageAccess>} />
+                <Route path="/quotations/:id/edit" element={<RequirePageAccess><QuotationEditor /></RequirePageAccess>} />
+                <Route path="/quotations/:id" element={<RequirePageAccess><QuotationView /></RequirePageAccess>} />
+                <Route path="/invoices" element={<RequirePageAccess><Invoices /></RequirePageAccess>} />
+                <Route path="/invoices/new" element={<RequirePageAccess><InvoiceEditor /></RequirePageAccess>} />
+                <Route path="/invoices/:id/edit" element={<RequirePageAccess><InvoiceEditor /></RequirePageAccess>} />
+                <Route path="/invoices/:id" element={<RequirePageAccess><InvoiceView /></RequirePageAccess>} />
+                <Route path="/expenses" element={<RequirePageAccess><Expenses /></RequirePageAccess>} />
+                <Route path="/income" element={<RequirePageAccess><Income /></RequirePageAccess>} />
+                <Route path="/customers" element={<RequirePageAccess><Customers /></RequirePageAccess>} />
+                <Route path="/reports" element={<RequirePageAccess><ReportsIndex /></RequirePageAccess>} />
                 <Route path="/reports/cashflow" element={<CashflowReport />} />
                 <Route path="/reports/sales" element={<SalesReport />} />
                 <Route path="/reports/profit-loss" element={<ProfitLossReport />} />
@@ -109,11 +125,11 @@ export default function App() {
                 <Route path="/reports/customers" element={<CustomerReport />} />
                 <Route path="/reports/vendors" element={<RequireAdmin><VendorReport /></RequireAdmin>} />
                 <Route path="/reports/credit" element={<RequireAdmin><CreditReport /></RequireAdmin>} />
-                <Route path="/hr/employees" element={<Employees />} />
-                <Route path="/hr/employees/:id" element={<EmployeeDetail />} />
-                <Route path="/hr/attendance" element={<Attendance />} />
-                <Route path="/hr/leaves" element={<Leaves />} />
-                <Route path="/hr/payroll" element={<RequireAdmin><Payroll /></RequireAdmin>} />
+                <Route path="/hr/employees" element={<RequirePageAccess><Employees /></RequirePageAccess>} />
+                <Route path="/hr/employees/:id" element={<RequirePageAccess><EmployeeDetail /></RequirePageAccess>} />
+                <Route path="/hr/attendance" element={<RequirePageAccess><Attendance /></RequirePageAccess>} />
+                <Route path="/hr/leaves" element={<RequirePageAccess><Leaves /></RequirePageAccess>} />
+                <Route path="/hr/payroll" element={<RequirePageAccess><Payroll /></RequirePageAccess>} />
                 <Route
                   path="/admin/vendors"
                   element={<RequireAdmin><Vendors /></RequireAdmin>}
@@ -139,6 +155,14 @@ export default function App() {
                   element={
                     <RequireAdmin>
                       <PdfDesigner />
+                    </RequireAdmin>
+                  }
+                />
+                <Route
+                  path="/admin/users"
+                  element={
+                    <RequireAdmin>
+                      <Users />
                     </RequireAdmin>
                   }
                 />

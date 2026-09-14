@@ -43,15 +43,32 @@ const fs = require('node:fs');
 function coerceUndefined(v) {
   return v === undefined ? null : v;
 }
-function coerceArgs(args) {
-  if (args.length === 0) return args;
-  if (args.length === 1 && args[0] !== null && typeof args[0] === 'object'
-      && !Array.isArray(args[0]) && !(args[0] instanceof Uint8Array)) {
-    const out = {};
-    for (const [k, v] of Object.entries(args[0])) out[k] = coerceUndefined(v);
-    return [out];
-  }
-  return args.map(coerceUndefined);
+
+// The Hrana write path in libsql's embedded-replica mode does NOT bind named
+// (@name/:name/$name) parameters correctly — the write is forwarded to the
+// remote and the server sees the markers as literal, hitting NOT NULL. Reads
+// work because they run against the local file. To be safe on every call
+// site, we rewrite the SQL to positional `?` and materialize a positional
+// array from the caller's args object.
+function rewriteNamedToPositional(sql, argsObj) {
+  const order = [];
+  const outSql = String(sql).replace(/[@:$](\w+)/g, (_m, name) => {
+    order.push(name);
+    return '?';
+  });
+  const values = order.map((n) => coerceUndefined(argsObj != null ? argsObj[n] : null));
+  return { sql: outSql, args: values };
+}
+
+function normalizeCall(sql, callArgs) {
+  const isObjectArg = callArgs.length === 1
+    && callArgs[0] !== null
+    && typeof callArgs[0] === 'object'
+    && !Array.isArray(callArgs[0])
+    && !(callArgs[0] instanceof Uint8Array);
+  if (isObjectArg) return rewriteNamedToPositional(sql, callArgs[0]);
+  const flat = callArgs.length === 0 ? [] : callArgs.flat().map(coerceUndefined);
+  return { sql: String(sql), args: flat };
 }
 
 // libsql's native exec hangs on the app's long multi-statement schema, so we
@@ -122,17 +139,41 @@ function splitStatements(sql) {
 function wrap(db) {
   const origPrepare = db.prepare.bind(db);
   const origExec = db.exec.bind(db);
-  db.prepare = (sql) => {
+  const stmtCache = new Map();
+  const preparePositional = (sql) => {
+    const cached = stmtCache.get(sql);
+    if (cached) return cached;
     const stmt = origPrepare(sql);
-    const origGet = stmt.get.bind(stmt);
-    const origAll = stmt.all.bind(stmt);
-    const origRun = stmt.run.bind(stmt);
-    const origIterate = stmt.iterate ? stmt.iterate.bind(stmt) : null;
-    stmt.get = (...a) => origGet(...coerceArgs(a));
-    stmt.all = (...a) => origAll(...coerceArgs(a));
-    stmt.run = (...a) => origRun(...coerceArgs(a));
-    if (origIterate) stmt.iterate = (...a) => origIterate(...coerceArgs(a));
+    stmtCache.set(sql, stmt);
     return stmt;
+  };
+  // Every prepare() rebuilds the SQL to use positional `?` markers and returns
+  // a wrapper that consumes the caller's arg-object as an in-order value list.
+  db.prepare = (sql) => {
+    return {
+      get: (...a) => {
+        const c = normalizeCall(sql, a);
+        return preparePositional(c.sql).get(...c.args);
+      },
+      all: (...a) => {
+        const c = normalizeCall(sql, a);
+        return preparePositional(c.sql).all(...c.args);
+      },
+      run: (...a) => {
+        const c = normalizeCall(sql, a);
+        return preparePositional(c.sql).run(...c.args);
+      },
+      iterate: (...a) => {
+        const c = normalizeCall(sql, a);
+        const s = preparePositional(c.sql);
+        return s.iterate ? s.iterate(...c.args) : s.all(...c.args);
+      },
+      // Chainable modifiers on the native Statement (pluck/raw/columns/safeIntegers).
+      // We proxy them lazily so we don't need to know the arg shape up-front.
+      pluck: (v) => { const s = preparePositional(String(sql).replace(/[@:$](\w+)/g, '?')); s.pluck(v); return s; },
+      raw: (v) => { const s = preparePositional(String(sql).replace(/[@:$](\w+)/g, '?')); s.raw(v); return s; },
+      columns: () => preparePositional(String(sql).replace(/[@:$](\w+)/g, '?')).columns(),
+    };
   };
   db.exec = (sql) => {
     for (const stmt of splitStatements(String(sql))) {

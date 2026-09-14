@@ -6,27 +6,27 @@ import { inr } from '../utils/format.js';
 
 const Tile = ({ label, value, hint, tone = 'text-slate-900', to }) => {
   const inner = (
-    <div className="card card-body h-full">
-      <div className="text-xs uppercase tracking-wide font-semibold text-slate-500">{label}</div>
-      <div className={`mt-2 text-2xl font-bold ${tone}`}>{value}</div>
-      {hint && <div className="text-xs text-slate-500 mt-1">{hint}</div>}
+    <div className="card card-body h-full min-w-0">
+      <div className="text-xs uppercase tracking-wide font-semibold text-slate-500 truncate">{label}</div>
+      <div className={`mt-2 text-xl sm:text-2xl font-bold break-all ${tone}`}>{value}</div>
+      {hint && <div className="text-xs text-slate-500 mt-1 truncate">{hint}</div>}
     </div>
   );
-  return to ? <Link to={to} className="block hover:opacity-90 transition">{inner}</Link> : inner;
+  return to ? <Link to={to} className="block hover:opacity-90 transition min-w-0">{inner}</Link> : inner;
 };
 
 const BigTile = ({ label, value, hint, tone, to, icon }) => {
   const inner = (
-    <div className="card card-body h-full">
-      <div className="flex items-center justify-between">
-        <div className="text-xs uppercase tracking-wide font-semibold text-slate-500">{label}</div>
-        {icon && <span className={'text-xl ' + tone}>{icon}</span>}
+    <div className="card card-body h-full min-w-0">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-xs uppercase tracking-wide font-semibold text-slate-500 truncate">{label}</div>
+        {icon && <span className={'text-xl shrink-0 ' + tone}>{icon}</span>}
       </div>
-      <div className={`mt-2 text-3xl font-bold ${tone}`}>{value}</div>
-      {hint && <div className="text-xs text-slate-500 mt-1">{hint}</div>}
+      <div className={`mt-2 text-xl sm:text-2xl lg:text-3xl font-bold break-all ${tone}`}>{value}</div>
+      {hint && <div className="text-xs text-slate-500 mt-1 truncate">{hint}</div>}
     </div>
   );
-  return to ? <Link to={to} className="block hover:opacity-90 transition">{inner}</Link> : inner;
+  return to ? <Link to={to} className="block hover:opacity-90 transition min-w-0">{inner}</Link> : inner;
 };
 
 const Section = ({ title, subtitle, children, right }) => (
@@ -143,6 +143,8 @@ export default function Dashboard() {
   const salary = stats.salary?.[period] || 0;
   const net = stats.net[period] || 0;
   const netTone = net >= 0 ? 'text-emerald-700' : 'text-red-700';
+  const advancesOut = stats.advances_outstanding?.total || 0;
+  const advancesEmpCount = stats.advances_outstanding?.employee_count || 0;
   const periodLabel = PERIODS.find((p) => p.key === period).label;
 
   return (
@@ -173,14 +175,14 @@ export default function Dashboard() {
           </div>
         }
       >
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-          <BigTile label="Income" value={inr(income)} tone="text-emerald-700" hint="Payments received" icon="▲" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
+          <BigTile label="Income" value={inr(income)} tone="text-emerald-700" to="/income" hint="Payments received" icon="▲" />
           <BigTile label="Expenses (deducted)" value={inr(expense)} tone="text-red-700" to="/expenses" hint="Reduce P&amp;L" icon="▼" />
           <BigTile
             label="Salary paid"
             value={inr(salary)}
             tone="text-rose-700"
-            to="/payroll"
+            to="/hr/payroll"
             hint="Payroll paid out"
             icon="◈"
           />
@@ -198,6 +200,20 @@ export default function Dashboard() {
             tone={netTone}
             hint="Income − Expenses − Salary"
             icon={net >= 0 ? '=' : '!'}
+          />
+        </div>
+
+        {/* Advances outstanding — money employees still owe the company from paid advances. */}
+        <div className="mt-4">
+          <BigTile
+            label="Employee advances outstanding"
+            value={inr(advancesOut)}
+            tone="text-amber-700"
+            to="/reports/advances-outstanding"
+            hint={advancesEmpCount > 0
+              ? `Owed by ${advancesEmpCount} employee${advancesEmpCount > 1 ? 's' : ''} — not yet recovered via payroll`
+              : 'All advances fully deducted'}
+            icon="↺"
           />
         </div>
 

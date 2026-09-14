@@ -102,7 +102,13 @@ app.post('/api/auth/logout', wrap(async (req, res) => {
 
 app.get('/api/auth/whoami', wrap(async (req, res) => {
   if (!req.session?.user) return res.status(401).json({ error: 'Not signed in' });
-  res.json({ user: req.session.user });
+  // Always return the freshest allowed_pages / role for this user so an admin
+  // change is picked up on the next request without needing a fresh login.
+  const fresh = db.getUser(req.session.user.id);
+  const user = fresh
+    ? { ...req.session.user, role: fresh.role, allowed_pages: fresh.allowed_pages }
+    : req.session.user;
+  res.json({ user });
 }));
 
 app.post('/api/auth/change-password', requireAuth, wrap(async (req, res) => {
@@ -112,6 +118,29 @@ app.post('/api/auth/change-password', requireAuth, wrap(async (req, res) => {
   const result = db.changePassword(req.session.user.username, oldPassword, newPassword);
   if (!result.ok) return res.status(400).json({ error: result.error });
   res.json(result);
+}));
+
+// ---------- Admin: user management ----------
+app.get('/api/admin/users', requireAdmin, wrap((req, res) => res.json(db.listUsers())));
+app.post('/api/admin/users', requireAdmin, wrap((req, res) => {
+  const r = db.createUser(req.body || {});
+  if (!r.ok) return res.status(400).json({ error: r.error });
+  res.json(r.user);
+}));
+app.patch('/api/admin/users/:id', requireAdmin, wrap((req, res) => {
+  const r = db.updateUser({ id: Number(req.params.id), ...(req.body || {}) });
+  if (!r.ok) return res.status(400).json({ error: r.error });
+  res.json(r.user);
+}));
+app.post('/api/admin/users/:id/reset-password', requireAdmin, wrap((req, res) => {
+  const r = db.adminResetPassword(Number(req.params.id), req.body?.newPassword);
+  if (!r.ok) return res.status(400).json({ error: r.error });
+  res.json(r);
+}));
+app.delete('/api/admin/users/:id', requireAdmin, wrap((req, res) => {
+  const r = db.deleteUser(Number(req.params.id), req.session.user.id);
+  if (!r.ok) return res.status(400).json({ error: r.error });
+  res.json(r);
 }));
 
 // ---------- Settings ----------

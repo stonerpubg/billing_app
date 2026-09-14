@@ -318,6 +318,10 @@ function init(dataDir) {
   `);
   // Migration for existing payroll_entries missing advance_deduction column
   ensureColumn('payroll_entries', 'advance_deduction', 'REAL NOT NULL DEFAULT 0');
+  // Fine-grained page permissions for non-admin users. Stored as a JSON array
+  // of page keys (e.g. ["dashboard","quotations"]). Admins ignore this and see
+  // everything. Empty / null on a non-admin means "no access to anything".
+  ensureColumn('users', 'allowed_pages', "TEXT NOT NULL DEFAULT ''");
   ensureColumn('expenses', 'deduct_from_income', 'INTEGER NOT NULL DEFAULT 1');
   // Vendor credit / partial-payment tracking on expenses.
   // paid_amount = how much cash has actually left the bank for this purchase.
@@ -607,12 +611,17 @@ function login(username, password) {
   const ok = verifyPassword(password, row.password_hash, row.password_salt);
   if (!ok) return { ok: false, error: 'Invalid credentials' };
   const usingDefault = DEFAULT_PASSWORDS[username] === password;
+  let allowedPages = [];
+  if (row.allowed_pages) {
+    try { allowedPages = JSON.parse(row.allowed_pages); } catch (_e) { allowedPages = []; }
+  }
   return {
     ok: true,
     user: {
       id: row.id,
       username: row.username,
       role: row.role,
+      allowed_pages: allowedPages,
       mustChangePassword: usingDefault,
     },
   };
@@ -629,6 +638,82 @@ function changePassword(username, oldPassword, newPassword) {
     next.salt,
     row.id
   );
+  return { ok: true };
+}
+
+// -------- User management (admin-only) --------
+function _userToJson(row) {
+  let allowedPages = [];
+  if (row.allowed_pages) {
+    try { allowedPages = JSON.parse(row.allowed_pages); } catch (_e) { allowedPages = []; }
+  }
+  return {
+    id: row.id,
+    username: row.username,
+    role: row.role,
+    allowed_pages: allowedPages,
+    created_at: row.created_at,
+  };
+}
+function listUsers() {
+  return db.prepare('SELECT id, username, role, allowed_pages, created_at FROM users ORDER BY id').all().map(_userToJson);
+}
+function getUser(id) {
+  const row = db.prepare('SELECT id, username, role, allowed_pages, created_at FROM users WHERE id = ?').get(id);
+  return row ? _userToJson(row) : null;
+}
+function _normalizePages(allowed_pages) {
+  if (!allowed_pages) return '';
+  if (typeof allowed_pages === 'string') {
+    try { const arr = JSON.parse(allowed_pages); return JSON.stringify(Array.isArray(arr) ? arr : []); }
+    catch (_e) { return ''; }
+  }
+  return JSON.stringify(Array.isArray(allowed_pages) ? allowed_pages : []);
+}
+function createUser({ username, password, role, allowed_pages }) {
+  const uname = String(username || '').trim();
+  if (!uname) return { ok: false, error: 'Username is required' };
+  if (!password || String(password).length < 6) return { ok: false, error: 'Password must be at least 6 characters' };
+  const nRole = role === 'admin' ? 'admin' : 'user';
+  const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(uname);
+  if (existing) return { ok: false, error: 'Username already exists' };
+  const h = hashPassword(String(password));
+  const info = db.prepare(
+    'INSERT INTO users (username, password_hash, password_salt, role, allowed_pages) VALUES (?, ?, ?, ?, ?)'
+  ).run(uname, h.hash, h.salt, nRole, _normalizePages(allowed_pages));
+  return { ok: true, user: getUser(info.lastInsertRowid) };
+}
+function updateUser({ id, role, allowed_pages }) {
+  const row = db.prepare('SELECT id, role FROM users WHERE id = ?').get(id);
+  if (!row) return { ok: false, error: 'User not found' };
+  const nRole = role === 'admin' ? 'admin' : (role === 'user' ? 'user' : row.role);
+  // Prevent demoting the last admin — the app becomes unmanageable otherwise.
+  if (row.role === 'admin' && nRole !== 'admin') {
+    const admins = db.prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'admin'").get().c;
+    if (admins <= 1) return { ok: false, error: 'Cannot demote the last admin' };
+  }
+  db.prepare('UPDATE users SET role = ?, allowed_pages = ? WHERE id = ?').run(nRole, _normalizePages(allowed_pages), id);
+  return { ok: true, user: getUser(id) };
+}
+function adminResetPassword(id, newPassword) {
+  if (!newPassword || String(newPassword).length < 6) return { ok: false, error: 'Password must be at least 6 characters' };
+  const row = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+  if (!row) return { ok: false, error: 'User not found' };
+  const h = hashPassword(String(newPassword));
+  db.prepare('UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?').run(h.hash, h.salt, id);
+  return { ok: true };
+}
+function deleteUser(id, currentUserId) {
+  const row = db.prepare('SELECT id, role FROM users WHERE id = ?').get(id);
+  if (!row) return { ok: false, error: 'User not found' };
+  if (currentUserId && Number(currentUserId) === Number(id)) {
+    return { ok: false, error: 'You cannot delete your own account' };
+  }
+  if (row.role === 'admin') {
+    const admins = db.prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'admin'").get().c;
+    if (admins <= 1) return { ok: false, error: 'Cannot delete the last admin' };
+  }
+  db.prepare('DELETE FROM users WHERE id = ?').run(id);
   return { ok: true };
 }
 
@@ -2647,6 +2732,9 @@ function dashboardStatsPlus() {
   const recv = receivablesReport();
   const invoiceCount = db.prepare('SELECT COUNT(*) AS c FROM invoices').get().c;
   const employeeCount = db.prepare('SELECT COUNT(*) AS c FROM employees WHERE is_active = 1').get().c;
+  // Employee advances still owed to the company — same math as the
+  // Advances Outstanding report so the numbers match everywhere.
+  const advOut = advancesOutstanding();
   return {
     ...base,
     income: {
@@ -2691,6 +2779,11 @@ function dashboardStatsPlus() {
     },
     invoiceCount,
     employeeCount,
+    advances_outstanding: {
+      total: +Number(advOut.total_outstanding || 0).toFixed(2),
+      employee_count: (advOut.rows || []).length,
+      top_employees: (advOut.rows || []).slice(0, 5),
+    },
     trend: monthlyTrend(12),
     expenseByCategory: expenseStats().byCategory,
     pipeline: pipelineStats(),
@@ -3798,6 +3891,12 @@ module.exports = {
   getAssetsDir,
   login,
   changePassword,
+  listUsers,
+  getUser,
+  createUser,
+  updateUser,
+  adminResetPassword,
+  deleteUser,
   getSettings,
   updateSettings,
   listProducts,

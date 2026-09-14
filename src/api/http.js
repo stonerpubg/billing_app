@@ -125,6 +125,13 @@ export function createHttpApi() {
       seedSampleData: () => req('POST', '/admin/seed-sample-data'),
       wipeAllData: () => req('POST', '/admin/wipe-all-data'),
     },
+    adminUsers: {
+      list: () => req('GET', '/admin/users'),
+      create: (u) => req('POST', '/admin/users', u),
+      update: (u) => req('PATCH', `/admin/users/${u.id}`, u),
+      resetPassword: (id, newPassword) => req('POST', `/admin/users/${id}/reset-password`, { newPassword }),
+      remove: (id) => req('DELETE', `/admin/users/${id}`),
+    },
     invoices: {
       list: () => req('GET', '/invoices'),
       get: (id) => req('GET', `/invoices/${id}`),
