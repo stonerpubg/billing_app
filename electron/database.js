@@ -1807,6 +1807,9 @@ function monthlyTrend(monthsBack = 12) {
     const expense = db
       .prepare('SELECT COALESCE(SUM(paid_amount), 0) AS s FROM expenses WHERE deduct_from_income = 1 AND expense_date >= ? AND expense_date < ?')
       .get(startKey, endKey).s;
+    const salary = db
+      .prepare('SELECT COALESCE(SUM(paid_amount), 0) AS s FROM payroll_entries WHERE paid_date IS NOT NULL AND paid_date >= ? AND paid_date < ?')
+      .get(startKey, endKey).s;
     // Billed value = quotations marked 'Billed' in this month, and invoices created this month
     const billed = db
       .prepare("SELECT COALESCE(SUM(grand_total), 0) AS s FROM quotations WHERE status = 'Billed' AND quote_date >= ? AND quote_date < ?")
@@ -1814,12 +1817,13 @@ function monthlyTrend(monthsBack = 12) {
     const invoiced = db
       .prepare('SELECT COALESCE(SUM(grand_total), 0) AS s FROM invoices WHERE invoice_date >= ? AND invoice_date < ?')
       .get(startKey, endKey).s;
-    const net = +(income - expense).toFixed(2);
+    const net = +(income - expense - salary).toFixed(2);
     out.push({
       month: localYm(start),
       label: start.toLocaleString('en-IN', { month: 'short' }) + ' ' + String(start.getFullYear()).slice(2),
       income: +income.toFixed(2),
       expense: +expense.toFixed(2),
+      salary: +salary.toFixed(2),
       billed: +billed.toFixed(2),
       invoiced: +invoiced.toFixed(2),
       net,
@@ -1889,14 +1893,16 @@ function dashboardTrend(granularity = 'month', count) {
       db.prepare('SELECT COALESCE(SUM(received_amount), 0) AS s FROM incomes WHERE income_date >= ? AND income_date < ?').get(b.startKey, b.endKey).s
     );
     const expense = db.prepare('SELECT COALESCE(SUM(paid_amount), 0) AS s FROM expenses WHERE deduct_from_income = 1 AND expense_date >= ? AND expense_date < ?').get(b.startKey, b.endKey).s;
+    const salary = db.prepare('SELECT COALESCE(SUM(paid_amount), 0) AS s FROM payroll_entries WHERE paid_date IS NOT NULL AND paid_date >= ? AND paid_date < ?').get(b.startKey, b.endKey).s;
     const billed = db.prepare("SELECT COALESCE(SUM(grand_total), 0) AS s FROM quotations WHERE status = 'Billed' AND quote_date >= ? AND quote_date < ?").get(b.startKey, b.endKey).s;
     const invoiced = db.prepare('SELECT COALESCE(SUM(grand_total), 0) AS s FROM invoices WHERE invoice_date >= ? AND invoice_date < ?').get(b.startKey, b.endKey).s;
-    const net = +(income - expense).toFixed(2);
+    const net = +(income - expense - salary).toFixed(2);
     return {
       month: b.key, // keep the "month" key name so existing charts work unchanged
       label: b.label,
       income: +income.toFixed(2),
       expense: +expense.toFixed(2),
+      salary: +salary.toFixed(2),
       billed: +billed.toFixed(2),
       invoiced: +invoiced.toFixed(2),
       net,
@@ -1972,14 +1978,16 @@ function dashboardTrendForRange(from, to) {
       db.prepare('SELECT COALESCE(SUM(received_amount), 0) AS s FROM incomes WHERE income_date >= ? AND income_date < ?').get(b.startKey, b.endKey).s
     );
     const expense = db.prepare('SELECT COALESCE(SUM(paid_amount), 0) AS s FROM expenses WHERE deduct_from_income = 1 AND expense_date >= ? AND expense_date < ?').get(b.startKey, b.endKey).s;
+    const salary = db.prepare('SELECT COALESCE(SUM(paid_amount), 0) AS s FROM payroll_entries WHERE paid_date IS NOT NULL AND paid_date >= ? AND paid_date < ?').get(b.startKey, b.endKey).s;
     const billed = db.prepare("SELECT COALESCE(SUM(grand_total), 0) AS s FROM quotations WHERE status = 'Billed' AND quote_date >= ? AND quote_date < ?").get(b.startKey, b.endKey).s;
     const invoiced = db.prepare('SELECT COALESCE(SUM(grand_total), 0) AS s FROM invoices WHERE invoice_date >= ? AND invoice_date < ?').get(b.startKey, b.endKey).s;
-    const net = +(income - expense).toFixed(2);
+    const net = +(income - expense - salary).toFixed(2);
     return {
       month: b.key,
       label: b.label,
       income: +income.toFixed(2),
       expense: +expense.toFixed(2),
+      salary: +salary.toFixed(2),
       billed: +billed.toFixed(2),
       invoiced: +invoiced.toFixed(2),
       net,
@@ -2528,6 +2536,8 @@ function dashboardMoneyForRange(from, to) {
   const clauseTo = to ? ' AND payment_date <= @to' : '';
   const expFrom = from ? ' AND expense_date >= @from' : '';
   const expTo = to ? ' AND expense_date <= @to' : '';
+  const payFrom = from ? ' AND paid_date >= @from' : '';
+  const payTo = to ? ' AND paid_date <= @to' : '';
   const params = {};
   if (from) params.from = from;
   if (to) params.to = to;
@@ -2546,11 +2556,16 @@ function dashboardMoneyForRange(from, to) {
   const extra = db.prepare(
     `SELECT COALESCE(SUM(amount), 0) AS s FROM expenses WHERE deduct_from_income = 0${expFrom}${expTo}`
   ).get(params).s;
+  // Salary paid out — only counts entries with paid_date set (real cashflow).
+  const salary = db.prepare(
+    `SELECT COALESCE(SUM(paid_amount), 0) AS s FROM payroll_entries WHERE paid_date IS NOT NULL${payFrom}${payTo}`
+  ).get(params).s;
   return {
     income: +income.toFixed(2),
     expense: +expense.toFixed(2),
     extra_expense: +extra.toFixed(2),
-    net: +(income - expense).toFixed(2),
+    salary: +salary.toFixed(2),
+    net: +(income - expense - salary).toFixed(2),
   };
 }
 
@@ -2584,6 +2599,12 @@ function dashboardStatsPlus() {
     (fromDate
       ? db.prepare('SELECT COALESCE(SUM(amount), 0) AS s FROM expenses WHERE deduct_from_income = 0 AND expense_date >= ?').get(fromDate).s
       : db.prepare('SELECT COALESCE(SUM(amount), 0) AS s FROM expenses WHERE deduct_from_income = 0').get().s);
+  // Salary paid — counts entries with a paid_date set. Filter is on paid_date
+  // (actual cashflow), not the payroll period, mirroring how expenses use expense_date.
+  const salaryPaid = (fromDate) =>
+    (fromDate
+      ? db.prepare('SELECT COALESCE(SUM(paid_amount), 0) AS s FROM payroll_entries WHERE paid_date IS NOT NULL AND paid_date >= ?').get(fromDate).s
+      : db.prepare('SELECT COALESCE(SUM(paid_amount), 0) AS s FROM payroll_entries WHERE paid_date IS NOT NULL').get().s);
 
   const expenseThisMonth = expDed(monthKey);
   const expenseThisYear = expDed(yearStart);
@@ -2591,6 +2612,9 @@ function dashboardStatsPlus() {
   const extraThisMonth = expExtra(monthKey);
   const extraThisYear = expExtra(yearStart);
   const extraAllTime = expExtra(null);
+  const salaryThisMonth = salaryPaid(monthKey);
+  const salaryThisYear = salaryPaid(yearStart);
+  const salaryAllTime = salaryPaid(null);
 
   // Top 5 extra-expense items (with category + vendor + date) so the dashboard
   // surfaces WHAT is classified as extra, not just the total.
@@ -2641,10 +2665,15 @@ function dashboardStatsPlus() {
       all_time: +extraAllTime.toFixed(2),
       recent_items: extraItems,
     },
+    salary: {
+      this_month: +salaryThisMonth.toFixed(2),
+      this_year: +salaryThisYear.toFixed(2),
+      all_time: +salaryAllTime.toFixed(2),
+    },
     net: {
-      this_month: +(paidThisMonth - expenseThisMonth).toFixed(2),
-      this_year: +(paidThisYear - expenseThisYear).toFixed(2),
-      all_time: +(paidAllTime - expenseAllTime).toFixed(2),
+      this_month: +(paidThisMonth - expenseThisMonth - salaryThisMonth).toFixed(2),
+      this_year: +(paidThisYear - expenseThisYear - salaryThisYear).toFixed(2),
+      all_time: +(paidAllTime - expenseAllTime - salaryAllTime).toFixed(2),
     },
     receivables: {
       total_outstanding: recv.total_outstanding,

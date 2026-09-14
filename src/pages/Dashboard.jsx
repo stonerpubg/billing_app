@@ -140,6 +140,7 @@ export default function Dashboard() {
   const income = stats.income[period] || 0;
   const expense = stats.expense[period] || 0;
   const extraExpense = stats.extra_expense?.[period] || 0;
+  const salary = stats.salary?.[period] || 0;
   const net = stats.net[period] || 0;
   const netTone = net >= 0 ? 'text-emerald-700' : 'text-red-700';
   const periodLabel = PERIODS.find((p) => p.key === period).label;
@@ -172,9 +173,17 @@ export default function Dashboard() {
           </div>
         }
       >
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <BigTile label="Income" value={inr(income)} tone="text-emerald-700" hint="Payments received" icon="▲" />
           <BigTile label="Expenses (deducted)" value={inr(expense)} tone="text-red-700" to="/expenses" hint="Reduce P&amp;L" icon="▼" />
+          <BigTile
+            label="Salary paid"
+            value={inr(salary)}
+            tone="text-rose-700"
+            to="/payroll"
+            hint="Payroll paid out"
+            icon="◈"
+          />
           <BigTile
             label="Extra expenses"
             value={inr(extraExpense)}
@@ -187,7 +196,7 @@ export default function Dashboard() {
             label={net >= 0 ? 'Net surplus' : 'Net deficit'}
             value={inr(Math.abs(net))}
             tone={netTone}
-            hint="Income − Expenses (deducted)"
+            hint="Income − Expenses − Salary"
             icon={net >= 0 ? '=' : '!'}
           />
         </div>
