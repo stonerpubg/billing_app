@@ -1603,7 +1603,25 @@ function receivablesReport() {
 // ================================================================
 
 function listVendors() {
-  return db.prepare('SELECT * FROM vendors ORDER BY name COLLATE NOCASE').all();
+  // Left-join expense aggregates so the vendors page can show who actually
+  // has expenses booked against them, without a follow-up query per vendor.
+  return db.prepare(
+    `SELECT v.*,
+            COALESCE(es.expense_count, 0) AS expense_count,
+            COALESCE(es.total_spent, 0)   AS total_spent,
+            COALESCE(es.outstanding, 0)   AS outstanding
+       FROM vendors v
+  LEFT JOIN (
+              SELECT vendor_id,
+                     COUNT(*) AS expense_count,
+                     COALESCE(SUM(amount), 0) AS total_spent,
+                     COALESCE(SUM(amount - paid_amount), 0) AS outstanding
+                FROM expenses
+               WHERE vendor_id IS NOT NULL
+               GROUP BY vendor_id
+            ) es ON es.vendor_id = v.id
+      ORDER BY v.name COLLATE NOCASE`
+  ).all();
 }
 function getVendor(id) {
   return db.prepare('SELECT * FROM vendors WHERE id = ?').get(id);
@@ -1722,7 +1740,7 @@ function incomeStats(filters = {}) {
 // EXPENSES
 // ================================================================
 
-const EXPENSE_CATEGORIES = ['Labour', 'Material', 'Transport', 'Utilities', 'Refreshments', 'Rent', 'Misc'];
+const EXPENSE_CATEGORIES = ['Labour', 'Material', 'Transport', 'Utilities', 'Refreshments', 'Rent', 'Personal', 'Misc'];
 
 function listExpenses(filters = {}) {
   const where = [];
@@ -2632,7 +2650,12 @@ function profitLossReport(filters = {}) {
          AND NOT EXISTS (SELECT 1 FROM invoices i WHERE i.quotation_id = quotations.id)`
     )
     .get(from, to).s;
-  const outstanding = invOutstanding + quoteOutstanding;
+  // Free-form incomes with partial receipts are also outstanding — they're
+  // money the customer still owes for a job that isn't invoice-linked.
+  const incomeOutstanding = db
+    .prepare('SELECT COALESCE(SUM(amount - received_amount), 0) AS s FROM incomes WHERE income_date >= ? AND income_date <= ? AND amount > received_amount')
+    .get(from, to).s;
+  const outstanding = invOutstanding + quoteOutstanding + incomeOutstanding;
   // Also include billed quotations in "invoiced" totals
   const billedQuotes = db
     .prepare(
@@ -2658,6 +2681,10 @@ function profitLossReport(filters = {}) {
   const salary = db
     .prepare('SELECT COALESCE(SUM(paid_amount), 0) AS s FROM payroll_entries WHERE paid_date IS NOT NULL AND paid_date >= ? AND paid_date <= ?')
     .get(from, to).s;
+  // Fold salary into the category breakdown so charts/tables show it.
+  const byCategory = salary > 0
+    ? [...byExpenseCat, { category: 'Salary', total: +salary.toFixed(2) }].sort((a, b) => b.total - a.total)
+    : byExpenseCat;
   return {
     period: { from, to },
     income: +income.toFixed(2),
@@ -2667,7 +2694,7 @@ function profitLossReport(filters = {}) {
     extra_expense: +extraExpense.toFixed(2),
     salary: +salary.toFixed(2),
     net: +(income - expense - salary).toFixed(2),
-    byExpenseCategory: byExpenseCat,
+    byExpenseCategory: byCategory,
   };
 }
 

@@ -106,6 +106,18 @@ export default function Sidebar() {
             Customers
           </NavLink>
         )}
+        {isAdmin && (
+          <NavLink to="/admin/vendors" className={linkClass}>
+            <Icon d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-14L4 7m8 4L4 7m0 0v10l8 4" />
+            Vendors
+          </NavLink>
+        )}
+        {isAdmin && (
+          <NavLink to="/admin/products" className={linkClass}>
+            <Icon d="M5 8h14M5 8a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v1a2 2 0 01-2 2M5 8l1 12a2 2 0 002 2h8a2 2 0 002-2l1-12M10 12h4" />
+            Products
+          </NavLink>
+        )}
         {can('/reports') && (
           <NavLink to="/reports" className={linkClass}>
             <Icon d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
@@ -135,8 +147,6 @@ export default function Sidebar() {
             activePrefix="/admin"
           >
             <NavLink to="/admin/users" className={childLinkClass}>Users</NavLink>
-            <NavLink to="/admin/products" className={childLinkClass}>Products</NavLink>
-            <NavLink to="/admin/vendors" className={childLinkClass}>Vendors</NavLink>
             <NavLink to="/admin/pdf-designer" className={childLinkClass}>PDF Designer</NavLink>
             <NavLink to="/admin/settings" className={childLinkClass}>Settings</NavLink>
           </Section>

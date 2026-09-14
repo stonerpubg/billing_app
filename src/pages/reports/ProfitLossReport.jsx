@@ -6,7 +6,7 @@ export default function ProfitLossReport() {
   return (
     <ReportShell
       title="Profit & Loss"
-      subtitle="Income (payments received) minus deducted expenses. Outstanding = billed but not yet paid."
+      subtitle="Income (payments received) minus deducted expenses and salary paid. Outstanding = invoiced/billed + income balances still due."
       loader={(f) => window.api.reports.profitLoss(f)}
       csvFilename="profit-loss"
       render={(data) => ({
@@ -15,8 +15,9 @@ export default function ProfitLossReport() {
           { label: 'Income received', value: inr(data.income), tone: 'good' },
           { label: 'Outstanding', value: inr(data.outstanding), tone: 'warn' },
           { label: 'Expenses (deducted)', value: inr(data.expense), tone: 'bad' },
+          { label: 'Salary paid', value: inr(data.salary || 0), tone: 'bad' },
           { label: 'Extra expenses', value: inr(data.extra_expense || 0), tone: 'warn' },
-          { label: 'Net (Income − Expenses)', value: inr(data.net), tone: data.net >= 0 ? 'good' : 'bad' },
+          { label: 'Net (Income − Expenses − Salary)', value: inr(data.net), tone: data.net >= 0 ? 'good' : 'bad' },
         ],
         columns: [
           { key: 'category', label: 'Expense category' },
