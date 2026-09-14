@@ -6,20 +6,29 @@ export function TrendChart({ data, height = 200 }) {
   const width = 700;
   const pad = { l: 44, r: 12, t: 12, b: 28 };
 
-  const { max, coordsIncome, coordsExpense, barW, xForMonth, yForVal, months, ticks } = useMemo(() => {
+  const { coordsIncome, coordsExpense, coordsSalary, barW, xForMonth, yForVal, months, ticks, bottomY } = useMemo(() => {
     const arr = data || [];
-    const max = Math.max(1, ...arr.flatMap((d) => [d.income, d.expense]));
+    // Cap axis on the tallest bar shown: income vs. (expense + salary) — the
+    // "money out" bar is stacked so it needs the combined height.
+    const max = Math.max(1, ...arr.flatMap((d) => [d.income, (d.expense || 0) + (d.salary || 0)]));
     const innerW = width - pad.l - pad.r;
     const innerH = height - pad.t - pad.b;
     const step = arr.length > 0 ? innerW / arr.length : 0;
     const barW = Math.max(4, step * 0.28);
     const xForMonth = (i) => pad.l + step * (i + 0.5);
     const yForVal = (v) => pad.t + innerH - (v / max) * innerH;
+    const bottomY = pad.t + innerH;
     const coordsIncome = arr.map((d, i) => ({ x: xForMonth(i), y: yForVal(d.income), v: d.income }));
-    const coordsExpense = arr.map((d, i) => ({ x: xForMonth(i), y: yForVal(d.expense), v: d.expense }));
+    // Expense sits on the baseline; salary stacks on top.
+    const coordsExpense = arr.map((d, i) => ({ x: xForMonth(i), y: yForVal(d.expense || 0), v: d.expense || 0 }));
+    const coordsSalary = arr.map((d, i) => {
+      const sal = d.salary || 0;
+      const stackedH = (d.expense || 0) + sal;
+      return { x: xForMonth(i), y: yForVal(stackedH), v: sal, expY: yForVal(d.expense || 0) };
+    });
     const months = arr.map((d) => d.label);
     const ticks = [0, 0.25, 0.5, 0.75, 1].map((r) => ({ y: yForVal(max * r), v: max * r }));
-    return { max, coordsIncome, coordsExpense, barW, xForMonth, yForVal, months, ticks };
+    return { coordsIncome, coordsExpense, coordsSalary, barW, xForMonth, yForVal, months, ticks, bottomY };
   }, [data, height]);
 
   const formatK = (v) => {
@@ -42,18 +51,23 @@ export function TrendChart({ data, height = 200 }) {
           </g>
         ))}
 
-        {/* Bars */}
+        {/* Bars: Income (green) on the left, Expense + Salary (stacked) on the right */}
         {coordsIncome.map((c, i) => {
           const e = coordsExpense[i];
-          const bottom = pad.t + (height - pad.t - pad.b);
+          const s = coordsSalary[i];
           return (
             <g key={i}>
-              <rect x={c.x - barW} y={c.y} width={barW} height={bottom - c.y} fill="#10b981" rx="1">
+              <rect x={c.x - barW} y={c.y} width={barW} height={bottomY - c.y} fill="#10b981" rx="1">
                 <title>{`${months[i]} — Income: ${c.v.toLocaleString('en-IN')}`}</title>
               </rect>
-              <rect x={c.x + 2} y={e.y} width={barW} height={bottom - e.y} fill="#ef4444" rx="1">
+              <rect x={c.x + 2} y={e.y} width={barW} height={bottomY - e.y} fill="#ef4444" rx="1">
                 <title>{`${months[i]} — Expense: ${e.v.toLocaleString('en-IN')}`}</title>
               </rect>
+              {s.v > 0 && (
+                <rect x={c.x + 2} y={s.y} width={barW} height={s.expY - s.y} fill="#e11d48" rx="1">
+                  <title>{`${months[i]} — Salary paid: ${s.v.toLocaleString('en-IN')}`}</title>
+                </rect>
+              )}
             </g>
           );
         })}
@@ -82,9 +96,10 @@ export function TrendChart({ data, height = 200 }) {
         {/* Baseline */}
         <line x1={pad.l} y1={height - pad.b} x2={width - pad.r} y2={height - pad.b} stroke="#cbd5e1" />
       </svg>
-      <div className="flex justify-center gap-4 text-xs text-slate-500 mt-1">
+      <div className="flex justify-center gap-4 text-xs text-slate-500 mt-1 flex-wrap">
         <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-emerald-500" /> Income</span>
         <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-red-500" /> Expense</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-rose-600" /> Salary</span>
         <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-brand-600" /> Net</span>
       </div>
     </div>

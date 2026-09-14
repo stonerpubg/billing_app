@@ -447,6 +447,7 @@ export default function Dashboard() {
                     <th className="th text-right">Invoiced</th>
                     <th className="th text-right">Income</th>
                     <th className="th text-right">Expenses</th>
+                    <th className="th text-right">Salary</th>
                     <th className="th text-right">Net</th>
                     <th className="th text-right">Growth</th>
                   </tr>
@@ -459,6 +460,7 @@ export default function Dashboard() {
                       <td className="td text-right">{inr(m.invoiced)}</td>
                       <td className="td text-right text-emerald-700">{inr(m.income)}</td>
                       <td className="td text-right text-red-700">{inr(m.expense)}</td>
+                      <td className="td text-right text-rose-700">{inr(m.salary || 0)}</td>
                       <td className={'td text-right font-semibold ' + (m.net >= 0 ? 'text-emerald-700' : 'text-red-700')}>{inr(m.net)}</td>
                       <td className={'td text-right text-xs font-semibold ' + (m.growth_pct > 0 ? 'text-emerald-700' : m.growth_pct < 0 ? 'text-red-700' : 'text-slate-400')}>
                         {m.growth_pct > 0 ? '▲' : m.growth_pct < 0 ? '▼' : '·'} {Math.abs(m.growth_pct).toFixed(1)}%
