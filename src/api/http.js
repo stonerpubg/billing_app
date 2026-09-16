@@ -152,6 +152,10 @@ export function createHttpApi() {
       create: (v) => req('POST', '/vendors', v),
       update: (v) => req('PATCH', `/vendors/${v.id}`, v),
       remove: (id) => req('DELETE', `/vendors/${id}`),
+      summary: (id) => req('GET', `/vendors/${id}/summary`),
+      payments: (id) => req('GET', `/vendors/${id}/payments`),
+      pay: (id, payment) => req('POST', `/vendors/${id}/payments`, payment),
+      removePayment: (paymentId) => req('DELETE', `/vendor-payments/${paymentId}`),
     },
     incomes: {
       list: (filters) => {

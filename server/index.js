@@ -279,6 +279,24 @@ app.patch('/api/vendors/:id', requireAuth, wrap((req, res) =>
 app.delete('/api/vendors/:id', requireAuth, wrap((req, res) =>
   res.json(db.deleteVendor(Number(req.params.id)))
 ));
+app.get('/api/vendors/:id/summary', requireAuth, wrap((req, res) => {
+  const s = db.vendorSummary(Number(req.params.id));
+  if (!s) return res.status(404).json({ error: 'Vendor not found' });
+  res.json(s);
+}));
+app.get('/api/vendors/:id/payments', requireAuth, wrap((req, res) =>
+  res.json(db.listVendorPayments(Number(req.params.id)))
+));
+app.post('/api/vendors/:id/payments', requireAuth, wrap((req, res) => {
+  const r = db.createVendorPayment({ ...(req.body || {}), vendor_id: Number(req.params.id) });
+  if (!r.ok) return res.status(400).json({ error: r.error });
+  res.json(r);
+}));
+app.delete('/api/vendor-payments/:id', requireAuth, wrap((req, res) => {
+  const r = db.deleteVendorPayment(Number(req.params.id));
+  if (!r.ok) return res.status(400).json({ error: r.error });
+  res.json(r);
+}));
 
 // ---------- Incomes (free-form receipts) ----------
 app.get('/api/incomes', requireAuth, wrap((req, res) => res.json(db.listIncomes(req.query || {}))));

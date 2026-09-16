@@ -322,6 +322,41 @@ function init(dataDir) {
   // of page keys (e.g. ["dashboard","quotations"]). Admins ignore this and see
   // everything. Empty / null on a non-admin means "no access to anything".
   ensureColumn('users', 'allowed_pages', "TEXT NOT NULL DEFAULT ''");
+
+  // Vendor payments — every settlement against a vendor's outstanding
+  // expenses is its own dated row (mirrors the advance_deductions pattern for
+  // employees). A payment is FIFO-applied to that vendor's oldest unpaid
+  // expenses, so expenses.paid_amount stays in sync.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS vendor_payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      vendor_id INTEGER NOT NULL,
+      payment_date TEXT NOT NULL,
+      amount REAL NOT NULL DEFAULT 0,
+      mode TEXT,
+      reference TEXT,
+      notes TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (vendor_id) REFERENCES vendors(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_vendor_payments_vendor ON vendor_payments(vendor_id);
+    CREATE INDEX IF NOT EXISTS idx_vendor_payments_date ON vendor_payments(payment_date);
+  `);
+  // Track which vendor payments settled which expenses, so deleting a payment
+  // can restore each expense's paid_amount correctly.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS vendor_payment_allocations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      vendor_payment_id INTEGER NOT NULL,
+      expense_id INTEGER NOT NULL,
+      amount REAL NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (vendor_payment_id) REFERENCES vendor_payments(id) ON DELETE CASCADE,
+      FOREIGN KEY (expense_id) REFERENCES expenses(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_vpa_payment ON vendor_payment_allocations(vendor_payment_id);
+    CREATE INDEX IF NOT EXISTS idx_vpa_expense ON vendor_payment_allocations(expense_id);
+  `);
   ensureColumn('expenses', 'deduct_from_income', 'INTEGER NOT NULL DEFAULT 1');
   // Vendor credit / partial-payment tracking on expenses.
   // paid_amount = how much cash has actually left the bank for this purchase.
@@ -1603,25 +1638,32 @@ function receivablesReport() {
 // ================================================================
 
 function listVendors() {
-  // Left-join expense aggregates so the vendors page can show who actually
-  // has expenses booked against them, without a follow-up query per vendor.
+  // Left-join expense aggregates + settled totals so the vendors page can show
+  // who has expenses, how much has been paid, and the running outstanding
+  // — without a follow-up query per vendor.
   return db.prepare(
     `SELECT v.*,
             COALESCE(es.expense_count, 0) AS expense_count,
-            COALESCE(es.total_spent, 0)   AS total_spent,
+            COALESCE(es.total_billed, 0)  AS total_billed,
+            COALESCE(es.total_paid, 0)    AS total_paid,
             COALESCE(es.outstanding, 0)   AS outstanding
        FROM vendors v
   LEFT JOIN (
               SELECT vendor_id,
                      COUNT(*) AS expense_count,
-                     COALESCE(SUM(amount), 0) AS total_spent,
+                     COALESCE(SUM(amount), 0) AS total_billed,
+                     COALESCE(SUM(paid_amount), 0) AS total_paid,
                      COALESCE(SUM(amount - paid_amount), 0) AS outstanding
                 FROM expenses
                WHERE vendor_id IS NOT NULL
                GROUP BY vendor_id
             ) es ON es.vendor_id = v.id
       ORDER BY v.name COLLATE NOCASE`
-  ).all();
+  ).all().map((r) => ({
+    ...r,
+    // Keep the previous field for backward compatibility with any existing UI.
+    total_spent: r.total_billed,
+  }));
 }
 function getVendor(id) {
   return db.prepare('SELECT * FROM vendors WHERE id = ?').get(id);
@@ -1640,6 +1682,123 @@ function updateVendor(v) {
 }
 function deleteVendor(id) {
   db.prepare('DELETE FROM vendors WHERE id = ?').run(id);
+  return { ok: true };
+}
+
+// -------- Vendor payments --------
+// listVendorPayments — dated payment history for a vendor, newest first
+function listVendorPayments(vendorId) {
+  return db.prepare(
+    `SELECT vp.*,
+            (SELECT COALESCE(SUM(a.amount), 0) FROM vendor_payment_allocations a WHERE a.vendor_payment_id = vp.id) AS applied_amount
+       FROM vendor_payments vp
+      WHERE vp.vendor_id = ?
+      ORDER BY vp.payment_date DESC, vp.id DESC`
+  ).all(vendorId);
+}
+
+// vendorSummary — total billed/paid/outstanding + payment + expense history
+function vendorSummary(vendorId) {
+  const vendor = db.prepare('SELECT * FROM vendors WHERE id = ?').get(vendorId);
+  if (!vendor) return null;
+  const totals = db.prepare(
+    `SELECT COALESCE(SUM(amount), 0) AS billed,
+            COALESCE(SUM(paid_amount), 0) AS paid,
+            COALESCE(SUM(amount - paid_amount), 0) AS outstanding,
+            COUNT(*) AS expense_count
+       FROM expenses
+      WHERE vendor_id = ?`
+  ).get(vendorId);
+  const expenses = db.prepare(
+    `SELECT id, expense_date, category, amount, paid_amount,
+            (amount - paid_amount) AS balance, description, reference
+       FROM expenses
+      WHERE vendor_id = ?
+      ORDER BY expense_date DESC, id DESC`
+  ).all(vendorId);
+  const payments = listVendorPayments(vendorId);
+  return {
+    vendor,
+    total_billed: +Number(totals.billed || 0).toFixed(2),
+    total_paid: +Number(totals.paid || 0).toFixed(2),
+    outstanding: +Number(totals.outstanding || 0).toFixed(2),
+    expense_count: totals.expense_count,
+    expenses,
+    payments,
+  };
+}
+
+// createVendorPayment — records a dated payment against a vendor and FIFO-
+// applies it across their oldest unpaid expenses (updating paid_amount).
+// Extra amount above the total outstanding is stored on the payment row as an
+// "advance" (applied is capped at total outstanding); the UI can flag that.
+function createVendorPayment({ vendor_id, payment_date, amount, mode, reference, notes }) {
+  const vid = Number(vendor_id);
+  if (!vid) return { ok: false, error: 'vendor_id is required' };
+  if (!payment_date) return { ok: false, error: 'payment_date is required' };
+  const amt = Number(amount);
+  if (!Number.isFinite(amt) || amt <= 0) return { ok: false, error: 'amount must be greater than zero' };
+  const vendor = db.prepare('SELECT id FROM vendors WHERE id = ?').get(vid);
+  if (!vendor) return { ok: false, error: 'Vendor not found' };
+
+  const tx = db.transaction(() => {
+    const info = db.prepare(
+      `INSERT INTO vendor_payments (vendor_id, payment_date, amount, mode, reference, notes)
+         VALUES (@vendor_id, @payment_date, @amount, @mode, @reference, @notes)`
+    ).run({
+      vendor_id: vid,
+      payment_date,
+      amount: +amt.toFixed(2),
+      mode: mode || 'Cash',
+      reference: reference || '',
+      notes: notes || '',
+    });
+    const paymentId = info.lastInsertRowid;
+    // FIFO across outstanding expenses for this vendor
+    const outstanding = db.prepare(
+      `SELECT id, amount, paid_amount
+         FROM expenses
+        WHERE vendor_id = ? AND (amount - paid_amount) > 0.001
+        ORDER BY expense_date ASC, id ASC`
+    ).all(vid);
+    let remaining = amt;
+    for (const e of outstanding) {
+      if (remaining <= 0.001) break;
+      const balance = e.amount - e.paid_amount;
+      const take = Math.min(balance, remaining);
+      if (take > 0.001) {
+        db.prepare('UPDATE expenses SET paid_amount = paid_amount + ? WHERE id = ?').run(+take.toFixed(2), e.id);
+        db.prepare(
+          'INSERT INTO vendor_payment_allocations (vendor_payment_id, expense_id, amount) VALUES (?, ?, ?)'
+        ).run(paymentId, e.id, +take.toFixed(2));
+        remaining -= take;
+      }
+    }
+    return { paymentId, applied: +(amt - remaining).toFixed(2), unapplied: +remaining.toFixed(2) };
+  });
+  const result = tx();
+  return {
+    ok: true,
+    payment: db.prepare('SELECT * FROM vendor_payments WHERE id = ?').get(result.paymentId),
+    applied: result.applied,
+    unapplied: result.unapplied,
+  };
+}
+
+// deleteVendorPayment — reverses the FIFO allocations then drops the row.
+function deleteVendorPayment(paymentId) {
+  const pid = Number(paymentId);
+  const row = db.prepare('SELECT id FROM vendor_payments WHERE id = ?').get(pid);
+  if (!row) return { ok: false, error: 'Payment not found' };
+  const tx = db.transaction(() => {
+    const allocs = db.prepare('SELECT expense_id, amount FROM vendor_payment_allocations WHERE vendor_payment_id = ?').all(pid);
+    for (const a of allocs) {
+      db.prepare('UPDATE expenses SET paid_amount = MAX(0, paid_amount - ?) WHERE id = ?').run(a.amount, a.expense_id);
+    }
+    // Cascade deletes the allocation rows via FK on delete cascade.
+    db.prepare('DELETE FROM vendor_payments WHERE id = ?').run(pid);
+  });
+  tx();
   return { ok: true };
 }
 
@@ -2245,9 +2404,16 @@ function cashflowReport(filters = {}) {
     debit: 0,
   }));
 
+  // Expenses on their own date now represent only the initial pay-at-purchase
+  // amount (paid_amount at the moment the expense was booked). Later
+  // settlements are their own dated rows via vendor_payments below, so the
+  // cashflow shows money moving on the day it actually moved.
   db.prepare(
-    `SELECT expense_date AS date, amount, category, vendor_name, description, payment_mode, reference
-       FROM expenses WHERE expense_date >= ? AND expense_date <= ?`
+    `SELECT expense_date AS date, paid_amount AS amount, category, vendor_name,
+            description, payment_mode, reference
+       FROM expenses
+      WHERE expense_date >= ? AND expense_date <= ?
+        AND paid_amount > 0`
   ).all(from, to).forEach((r) => rows.push({
     date: r.date,
     kind: 'OUT',
@@ -2255,6 +2421,26 @@ function cashflowReport(filters = {}) {
     party: r.vendor_name || '—',
     description: r.description || '',
     mode: r.payment_mode || '',
+    reference: r.reference || '',
+    credit: 0,
+    debit: +r.amount.toFixed(2),
+  }));
+
+  // Vendor settlements — subsequent payments against outstanding expenses,
+  // recorded on the actual payment date (not the original purchase date).
+  db.prepare(
+    `SELECT vp.payment_date AS date, vp.amount, vp.mode, vp.reference, vp.notes,
+            v.name AS vendor_name
+       FROM vendor_payments vp
+       JOIN vendors v ON v.id = vp.vendor_id
+      WHERE vp.payment_date >= ? AND vp.payment_date <= ?`
+  ).all(from, to).forEach((r) => rows.push({
+    date: r.date,
+    kind: 'OUT',
+    source: 'Vendor payment',
+    party: r.vendor_name || '—',
+    description: r.notes || 'Vendor settlement',
+    mode: r.mode || '',
     reference: r.reference || '',
     credit: 0,
     debit: +r.amount.toFixed(2),
@@ -4020,6 +4206,10 @@ module.exports = {
   receivablesReport,
   // Vendors
   listVendors,
+  vendorSummary,
+  listVendorPayments,
+  createVendorPayment,
+  deleteVendorPayment,
   getVendor,
   createVendor,
   updateVendor,
