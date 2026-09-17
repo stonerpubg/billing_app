@@ -47,7 +47,9 @@ export default function Income() {
   const [showNewCustomer, setShowNewCustomer] = useState(false);
   const [newCustomer, setNewCustomer] = useState({ name: '', phone: '', email: '', gstin: '', address: '', city: '', state: '' });
   const [payingId, setPayingId] = useState(null);
-  const [payAmt, setPayAmt] = useState('');
+  const [payForm, setPayForm] = useState({ receipt_date: today(), amount: '', mode: 'Cash', reference: '', notes: '' });
+  const [historyId, setHistoryId] = useState(null);
+  const [historyRow, setHistoryRow] = useState(null); // { ...income, receipts: [...] }
 
   const load = async () => {
     const clean = Object.fromEntries(Object.entries(filters).filter(([, v]) => v));
@@ -109,15 +111,56 @@ export default function Income() {
     } catch (err) { toast.error(err.message || 'Delete failed'); }
   };
 
-  const recordPayment = async () => {
+  const openReceive = (row) => {
+    const balance = Math.max(0, (row.amount || 0) - (row.received_amount || 0));
+    setPayingId(row.id);
+    setPayForm({
+      receipt_date: today(),
+      amount: String(balance),
+      mode: row.mode || 'Cash',
+      reference: '',
+      notes: '',
+    });
+  };
+  const recordReceipt = async () => {
     if (!payingId) return;
-    const amt = Number(payAmt);
+    const amt = Number(payForm.amount);
     if (!(amt > 0)) return toast.error('Enter an amount > 0');
+    if (!payForm.receipt_date) return toast.error('Pick a receipt date');
     try {
-      await window.api.incomes.recordPayment(payingId, amt);
-      toast.success('Payment recorded');
-      setPayingId(null); setPayAmt('');
+      const r = await window.api.incomes.receive(payingId, {
+        receipt_date: payForm.receipt_date,
+        amount: amt,
+        mode: payForm.mode,
+        reference: payForm.reference,
+        notes: payForm.notes,
+      });
+      toast.success(
+        r.unapplied > 0
+          ? `Recorded ${inr(r.applied)} — ${inr(r.unapplied)} above the outstanding was ignored`
+          : `Recorded ${inr(r.applied)}`
+      );
+      const savedHistoryId = historyId; // preserve if history drawer is open
+      setPayingId(null);
       load();
+      if (savedHistoryId) openHistory({ id: savedHistoryId });
+    } catch (e) { toast.error(e.message); }
+  };
+  const openHistory = async (row) => {
+    setHistoryId(row.id);
+    setHistoryRow(null);
+    try {
+      const full = await window.api.incomes.get(row.id);
+      setHistoryRow(full);
+    } catch (e) { toast.error(e.message); }
+  };
+  const deleteReceipt = async (receiptId) => {
+    if (!confirm('Delete this receipt? The outstanding balance will grow back by that amount.')) return;
+    try {
+      await window.api.incomes.removeReceipt(receiptId);
+      toast.success('Receipt deleted');
+      load();
+      if (historyId) openHistory({ id: historyId });
     } catch (e) { toast.error(e.message); }
   };
 
@@ -332,12 +375,13 @@ export default function Income() {
                     {balance > 0 && (
                       <button
                         className="btn-primary text-xs py-1 mr-1"
-                        onClick={() => { setPayingId(r.id); setPayAmt(String(balance)); }}
-                        title={`Record a receipt against ${inr(balance)} owed`}
+                        onClick={() => openReceive(r)}
+                        title={`Record a dated receipt against ${inr(balance)} owed`}
                       >
                         + Receive
                       </button>
                     )}
+                    <button className="btn-ghost text-xs mr-1" onClick={() => openHistory(r)}>History</button>
                     <button className="btn-secondary text-xs mr-1" onClick={() => openEdit(r)}>Edit</button>
                     <button className="btn-ghost text-xs text-red-600" onClick={() => remove(r)}>Delete</button>
                   </td>
@@ -462,8 +506,8 @@ export default function Income() {
         </div>
       </Modal>
 
-      {/* Quick "Record receipt" for outstanding / partial rows */}
-      <Modal open={!!payingId} title="Record receipt" onClose={() => { setPayingId(null); setPayAmt(''); }}>
+      {/* Dated "Record receipt" for outstanding / partial rows */}
+      <Modal open={!!payingId} title="Record receipt" onClose={() => setPayingId(null)} size="lg">
         {payingId && (() => {
           const row = rows.find((r) => r.id === payingId);
           const amount = Number(row?.amount) || 0;
@@ -472,27 +516,119 @@ export default function Income() {
           return (
             <div className="p-5 space-y-3">
               <div className="text-sm text-slate-700">
-                <div><strong>{row?.customer_name || 'Customer'}</strong> — {row?.notes || row?.reference || ''}</div>
+                <div><strong>{row?.customer_name || 'Customer'}</strong>{row?.reference ? ` · ${row.reference}` : ''}</div>
                 <div className="text-xs text-slate-500 mt-1">
                   Total: {inr(amount)} · Received: {inr(received)} · <span className="text-red-700 font-semibold">Balance: {inr(balance)}</span>
                 </div>
               </div>
-              <div>
-                <label className="label">Received now (₹)</label>
-                <input type="number" min="0.01" step="0.01" max={balance} className="input"
-                  value={payAmt} onChange={(e) => setPayAmt(e.target.value)} autoFocus />
-                <div className="text-xs text-slate-500 mt-1">Max {inr(balance)}. Adds to Dashboard / P&amp;L income.</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Receipt date *</label>
+                  <input type="date" className="input" value={payForm.receipt_date}
+                    onChange={(e) => setPayForm({ ...payForm, receipt_date: e.target.value })} />
+                </div>
+                <div>
+                  <label className="label">Amount (₹) *</label>
+                  <input type="number" min="0.01" step="0.01" max={balance} className="input"
+                    value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })} autoFocus />
+                </div>
+                <div>
+                  <label className="label">Mode</label>
+                  <select className="input" value={payForm.mode} onChange={(e) => setPayForm({ ...payForm, mode: e.target.value })}>
+                    {MODES.map((m) => <option key={m}>{m}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Reference</label>
+                  <input className="input" value={payForm.reference}
+                    onChange={(e) => setPayForm({ ...payForm, reference: e.target.value })}
+                    placeholder="UTR / cheque no." />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="label">Notes</label>
+                  <input className="input" value={payForm.notes}
+                    onChange={(e) => setPayForm({ ...payForm, notes: e.target.value })} />
+                </div>
               </div>
               <div className="flex gap-2 text-xs">
-                <button className="btn-secondary" onClick={() => setPayAmt(String(balance))}>Full balance ({inr(balance)})</button>
-                <button className="btn-secondary" onClick={() => setPayAmt(String(+(balance / 2).toFixed(2)))}>Half ({inr(balance / 2)})</button>
+                <button className="btn-secondary" onClick={() => setPayForm({ ...payForm, amount: String(balance) })}>Full balance ({inr(balance)})</button>
+                <button className="btn-secondary" onClick={() => setPayForm({ ...payForm, amount: String(+(balance / 2).toFixed(2)) })}>Half ({inr(balance / 2)})</button>
               </div>
+              <p className="text-xs text-slate-500">
+                Each receipt is its own dated transaction — cashflow &amp; history show the money on the day it was received, not on the original income date.
+              </p>
             </div>
           );
         })()}
         <div className="p-5 border-t border-slate-200 flex justify-end gap-2">
-          <button className="btn-secondary" onClick={() => { setPayingId(null); setPayAmt(''); }}>Cancel</button>
-          <button className="btn-primary" onClick={recordPayment}>Record receipt</button>
+          <button className="btn-secondary" onClick={() => setPayingId(null)}>Cancel</button>
+          <button className="btn-primary" onClick={recordReceipt}>Record receipt</button>
+        </div>
+      </Modal>
+
+      {/* Receipt history */}
+      <Modal open={!!historyId} title={historyRow ? `${historyRow.customer_name || 'Customer'} — Receipt history` : 'Receipt history'} onClose={() => { setHistoryId(null); setHistoryRow(null); }} size="lg">
+        {!historyRow ? (
+          <div className="p-5 text-sm text-slate-500">Loading…</div>
+        ) : (
+          <div className="p-5 space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="card card-body">
+                <div className="text-[10px] uppercase font-semibold text-slate-500">Total</div>
+                <div className="text-lg font-bold tabular-nums">{inr(historyRow.amount)}</div>
+              </div>
+              <div className="card card-body">
+                <div className="text-[10px] uppercase font-semibold text-slate-500">Received</div>
+                <div className="text-lg font-bold text-emerald-700 tabular-nums">{inr(historyRow.received_amount)}</div>
+              </div>
+              <div className="card card-body">
+                <div className="text-[10px] uppercase font-semibold text-slate-500">Balance</div>
+                <div className={'text-lg font-bold tabular-nums ' + (historyRow.balance > 0 ? 'text-red-700' : 'text-slate-400')}>{inr(historyRow.balance)}</div>
+              </div>
+            </div>
+            <div>
+              <div className="text-xs uppercase font-semibold text-slate-500 mb-2">Receipts ({(historyRow.receipts || []).length})</div>
+              <div className="border rounded overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="th">Date</th>
+                      <th className="th text-right">Amount</th>
+                      <th className="th">Mode</th>
+                      <th className="th">Reference</th>
+                      <th className="th">Notes</th>
+                      <th className="th"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(historyRow.receipts || []).length === 0 && (
+                      <tr><td colSpan={6} className="td text-center text-slate-400 py-6 text-xs">No receipts yet.</td></tr>
+                    )}
+                    {(historyRow.receipts || []).map((r) => (
+                      <tr key={r.id} className="hover:bg-slate-50">
+                        <td className="td whitespace-nowrap">{r.receipt_date}</td>
+                        <td className="td text-right tabular-nums text-emerald-700 font-semibold">{inr(r.amount)}</td>
+                        <td className="td">{r.mode || '—'}</td>
+                        <td className="td text-xs">{r.reference || '—'}</td>
+                        <td className="td text-xs">{r.notes || '—'}</td>
+                        <td className="td text-right">
+                          <button className="btn-ghost text-xs text-red-600" onClick={() => deleteReceipt(r.id)}>Delete</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="p-5 border-t border-slate-200 flex justify-end gap-2">
+          {historyRow && historyRow.balance > 0 && (
+            <button className="btn-primary" onClick={() => { openReceive(historyRow); }}>
+              + Record receipt
+            </button>
+          )}
+          <button className="btn-secondary" onClick={() => { setHistoryId(null); setHistoryRow(null); }}>Close</button>
         </div>
       </Modal>
 

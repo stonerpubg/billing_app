@@ -323,6 +323,44 @@ function init(dataDir) {
   // everything. Empty / null on a non-admin means "no access to anything".
   ensureColumn('users', 'allowed_pages', "TEXT NOT NULL DEFAULT ''");
 
+  // Income receipts — every partial receipt against an income entry is its
+  // own dated row. incomes.received_amount stays as a denormalized running
+  // total so existing dashboard/report queries keep working, but cashflow
+  // and the history drawer read from this table for real per-day activity.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS income_receipts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      income_id INTEGER NOT NULL,
+      receipt_date TEXT NOT NULL,
+      amount REAL NOT NULL DEFAULT 0,
+      mode TEXT,
+      reference TEXT,
+      notes TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (income_id) REFERENCES incomes(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_income_receipts_income ON income_receipts(income_id);
+    CREATE INDEX IF NOT EXISTS idx_income_receipts_date ON income_receipts(receipt_date);
+  `);
+  // Back-fill: any income row created before this table existed with
+  // received_amount > 0 has no receipt rows yet. Seed an "initial" receipt
+  // on income_date so cashflow shows the money on the day it was booked.
+  try {
+    const legacyIncomes = db.prepare(
+      `SELECT id, income_date, received_amount, mode, reference
+         FROM incomes
+        WHERE received_amount > 0
+          AND NOT EXISTS (SELECT 1 FROM income_receipts r WHERE r.income_id = incomes.id)`
+    ).all();
+    const insReceipt = db.prepare(
+      `INSERT INTO income_receipts (income_id, receipt_date, amount, mode, reference, notes)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    );
+    for (const inc of legacyIncomes) {
+      insReceipt.run(inc.id, inc.income_date, inc.received_amount, inc.mode || '', inc.reference || '', 'Initial receipt (migrated)');
+    }
+  } catch (_e) { /* idempotent */ }
+
   // Vendor payments — every settlement against a vendor's outstanding
   // expenses is its own dated row (mirrors the advance_deductions pattern for
   // employees). A payment is FIFO-applied to that vendor's oldest unpaid
@@ -1821,7 +1859,64 @@ function listIncomes(filters = {}) {
   return db.prepare(sql).all(params);
 }
 function getIncome(id) {
-  return db.prepare('SELECT *, (amount - received_amount) AS balance FROM incomes WHERE id = ?').get(id);
+  const row = db.prepare('SELECT *, (amount - received_amount) AS balance FROM incomes WHERE id = ?').get(id);
+  if (!row) return null;
+  row.receipts = db.prepare(
+    'SELECT * FROM income_receipts WHERE income_id = ? ORDER BY receipt_date DESC, id DESC'
+  ).all(id);
+  return row;
+}
+function listIncomeReceipts(incomeId) {
+  return db.prepare(
+    'SELECT * FROM income_receipts WHERE income_id = ? ORDER BY receipt_date DESC, id DESC'
+  ).all(incomeId);
+}
+// Records a dated receipt against an income entry, capped at the outstanding
+// balance so received_amount never exceeds amount.
+function createIncomeReceipt({ income_id, receipt_date, amount, mode, reference, notes }) {
+  const iid = Number(income_id);
+  if (!iid) return { ok: false, error: 'income_id is required' };
+  if (!receipt_date) return { ok: false, error: 'receipt_date is required' };
+  const amt = Number(amount);
+  if (!Number.isFinite(amt) || amt <= 0) return { ok: false, error: 'amount must be greater than zero' };
+  const inc = db.prepare('SELECT id, amount, received_amount FROM incomes WHERE id = ?').get(iid);
+  if (!inc) return { ok: false, error: 'Income not found' };
+  const balance = Math.max(0, (inc.amount || 0) - (inc.received_amount || 0));
+  if (balance <= 0.001) return { ok: false, error: 'This income is already fully received' };
+  const take = Math.min(balance, amt);
+  const tx = db.transaction(() => {
+    const info = db.prepare(
+      `INSERT INTO income_receipts (income_id, receipt_date, amount, mode, reference, notes)
+       VALUES (@income_id, @receipt_date, @amount, @mode, @reference, @notes)`
+    ).run({
+      income_id: iid,
+      receipt_date,
+      amount: +take.toFixed(2),
+      mode: mode || 'Cash',
+      reference: reference || '',
+      notes: notes || '',
+    });
+    db.prepare('UPDATE incomes SET received_amount = received_amount + ? WHERE id = ?').run(+take.toFixed(2), iid);
+    return info.lastInsertRowid;
+  });
+  const receiptId = tx();
+  return {
+    ok: true,
+    receipt: db.prepare('SELECT * FROM income_receipts WHERE id = ?').get(receiptId),
+    applied: +take.toFixed(2),
+    unapplied: +(amt - take).toFixed(2),
+  };
+}
+function deleteIncomeReceipt(receiptId) {
+  const rid = Number(receiptId);
+  const row = db.prepare('SELECT income_id, amount FROM income_receipts WHERE id = ?').get(rid);
+  if (!row) return { ok: false, error: 'Receipt not found' };
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE incomes SET received_amount = MAX(0, received_amount - ?) WHERE id = ?').run(row.amount, row.income_id);
+    db.prepare('DELETE FROM income_receipts WHERE id = ?').run(rid);
+  });
+  tx();
+  return { ok: true };
 }
 // Clamp received to [0, amount]. Blank/null received defaults to full amount (backwards compat).
 function _normalizeReceived(received, amount) {
@@ -1847,6 +1942,14 @@ function createIncome(i) {
     reference: i.reference || '',
     notes: i.notes || '',
   });
+  // Seed an initial receipt row so cashflow / history have a real transaction
+  // for the amount collected at booking. Later top-ups become their own rows.
+  if (received > 0) {
+    db.prepare(
+      `INSERT INTO income_receipts (income_id, receipt_date, amount, mode, reference, notes)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(info.lastInsertRowid, i.income_date, received, i.mode || 'Cash', i.reference || '', 'Initial receipt');
+  }
   return getIncome(info.lastInsertRowid);
 }
 function updateIncome(i) {
@@ -2383,15 +2486,16 @@ function cashflowReport(filters = {}) {
     debit: 0,
   }));
 
-  // Free-form incomes (no invoice / no quote) — count `received_amount`, not the
-  // headline `amount`, since that's the actual cashflow.
+  // Free-form incomes — count each dated receipt on the day it was received
+  // (not on the original income_date), so partial receipts land on the right
+  // days in cashflow.
   db.prepare(
-    `SELECT inc.income_date AS date, inc.received_amount AS amount, inc.mode, inc.reference,
-            inc.notes, COALESCE(c.name, inc.customer_name, '—') AS party
-       FROM incomes inc
+    `SELECT r.receipt_date AS date, r.amount, r.mode, r.reference, r.notes,
+            COALESCE(c.name, inc.customer_name, '—') AS party
+       FROM income_receipts r
+       JOIN incomes inc ON inc.id = r.income_id
        LEFT JOIN customers c ON c.id = inc.customer_id
-      WHERE inc.received_amount > 0
-        AND inc.income_date >= ? AND inc.income_date <= ?`
+      WHERE r.receipt_date >= ? AND r.receipt_date <= ?`
   ).all(from, to).forEach((r) => rows.push({
     date: r.date,
     kind: 'IN',
@@ -4220,6 +4324,9 @@ module.exports = {
   createIncome,
   updateIncome,
   recordIncomePayment,
+  listIncomeReceipts,
+  createIncomeReceipt,
+  deleteIncomeReceipt,
   deleteIncome,
   incomeStats,
   listExpenses,

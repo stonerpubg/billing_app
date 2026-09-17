@@ -305,6 +305,19 @@ app.get('/api/incomes/:id', requireAuth, wrap((req, res) => res.json(db.getIncom
 app.post('/api/incomes', requireAuth, wrap((req, res) => res.json(db.createIncome(req.body || {}))));
 app.put('/api/incomes/:id', requireAuth, wrap((req, res) => res.json(db.updateIncome({ ...req.body, id: Number(req.params.id) }))));
 app.post('/api/incomes/:id/record-payment', requireAuth, wrap((req, res) => res.json(db.recordIncomePayment(Number(req.params.id), req.body?.amount))));
+app.get('/api/incomes/:id/receipts', requireAuth, wrap((req, res) =>
+  res.json(db.listIncomeReceipts(Number(req.params.id)))
+));
+app.post('/api/incomes/:id/receipts', requireAuth, wrap((req, res) => {
+  const r = db.createIncomeReceipt({ ...(req.body || {}), income_id: Number(req.params.id) });
+  if (!r.ok) return res.status(400).json({ error: r.error });
+  res.json(r);
+}));
+app.delete('/api/income-receipts/:id', requireAuth, wrap((req, res) => {
+  const r = db.deleteIncomeReceipt(Number(req.params.id));
+  if (!r.ok) return res.status(400).json({ error: r.error });
+  res.json(r);
+}));
 app.delete('/api/incomes/:id', requireAuth, wrap((req, res) => res.json(db.deleteIncome(Number(req.params.id)))));
 
 app.get('/api/expenses', requireAuth, wrap((req, res) => res.json(db.listExpenses(req.query || {}))));

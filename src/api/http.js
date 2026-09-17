@@ -166,6 +166,9 @@ export function createHttpApi() {
       create: (i) => req('POST', '/incomes', i),
       update: (i) => req('PUT', `/incomes/${i.id}`, i),
       recordPayment: (id, amount) => req('POST', `/incomes/${id}/record-payment`, { amount }),
+      receipts: (id) => req('GET', `/incomes/${id}/receipts`),
+      receive: (id, receipt) => req('POST', `/incomes/${id}/receipts`, receipt),
+      removeReceipt: (receiptId) => req('DELETE', `/income-receipts/${receiptId}`),
       remove: (id) => req('DELETE', `/incomes/${id}`),
       stats: (filters) => {
         const qs = filters ? '?' + new URLSearchParams(Object.entries(filters).filter(([, v]) => v)).toString() : '';
