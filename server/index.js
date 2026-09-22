@@ -335,6 +335,9 @@ app.post('/api/expenses', requireAuth, wrap((req, res) => res.json(db.createExpe
 app.patch('/api/expenses/:id', requireAuth, wrap((req, res) =>
   res.json(db.updateExpense({ ...(req.body || {}), id: Number(req.params.id) }))
 ));
+app.patch('/api/expenses/:id/amount', requireAuth, wrap((req, res) =>
+  res.json(db.updateVendorExpenseAmount(Number(req.params.id), req.body?.amount))
+));
 app.delete('/api/expenses/:id', requireAuth, wrap((req, res) =>
   res.json(db.deleteExpense(Number(req.params.id)))
 ));

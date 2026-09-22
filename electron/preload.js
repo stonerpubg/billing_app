@@ -88,6 +88,7 @@ contextBridge.exposeInMainWorld('api', {
     get: (id) => invoke('expenses:get', id),
     create: (e) => invoke('expenses:create', e),
     update: (e) => invoke('expenses:update', e),
+    updateAmount: (id, amount) => invoke('expenses:updateAmount', { id, amount }),
     remove: (id) => invoke('expenses:delete', id),
     categories: () => invoke('expenses:categories'),
     stats: (filters) => invoke('expenses:stats', filters),

@@ -273,6 +273,7 @@ ipcMain.handle('expenses:list', (_e, filters) => db.listExpenses(filters || {}))
 ipcMain.handle('expenses:get', (_e, id) => db.getExpense(id));
 ipcMain.handle('expenses:create', (_e, exp) => db.createExpense(exp));
 ipcMain.handle('expenses:update', (_e, exp) => db.updateExpense(exp));
+ipcMain.handle('expenses:updateAmount', (_e, { id, amount }) => db.updateVendorExpenseAmount(id, amount));
 ipcMain.handle('expenses:delete', (_e, id) => db.deleteExpense(id));
 ipcMain.handle('expenses:categories', () => db.expenseCategories());
 ipcMain.handle('expenses:stats', (_e, filters) => db.expenseStats(filters || {}));

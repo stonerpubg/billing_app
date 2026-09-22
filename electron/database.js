@@ -1822,6 +1822,13 @@ function createVendorPayment({ vendor_id, payment_date, amount, mode, reference,
   if (!Number.isFinite(amt) || amt <= 0) return { ok: false, error: 'amount must be greater than zero' };
   const vendor = db.prepare('SELECT id FROM vendors WHERE id = ?').get(vid);
   if (!vendor) return { ok: false, error: 'Vendor not found' };
+  const outstandingTotal = db.prepare(
+    'SELECT COALESCE(SUM(amount - paid_amount), 0) AS outstanding FROM expenses WHERE vendor_id = ?'
+  ).get(vid).outstanding;
+  if (outstandingTotal <= 0.001) return { ok: false, error: 'This vendor has no outstanding balance' };
+  if (amt > outstandingTotal + 0.001) {
+    return { ok: false, error: `Payment cannot exceed outstanding balance (${Number(outstandingTotal).toFixed(2)})` };
+  }
 
   const tx = db.transaction(() => {
     const info = db.prepare(
@@ -1865,6 +1872,20 @@ function createVendorPayment({ vendor_id, payment_date, amount, mode, reference,
     applied: result.applied,
     unapplied: result.unapplied,
   };
+}
+
+function updateVendorExpenseAmount(expenseId, amount) {
+  const id = Number(expenseId);
+  const nextAmount = Number(amount);
+  if (!Number.isInteger(id) || id <= 0) throw new Error('Expense not found');
+  if (!Number.isFinite(nextAmount) || nextAmount <= 0) throw new Error('Amount must be greater than zero');
+  const expense = db.prepare('SELECT id, amount, paid_amount FROM expenses WHERE id = ?').get(id);
+  if (!expense) throw new Error('Expense not found');
+  if (nextAmount + 0.001 < Number(expense.paid_amount || 0)) {
+    throw new Error(`Amount cannot be less than already paid (${Number(expense.paid_amount || 0).toFixed(2)})`);
+  }
+  db.prepare('UPDATE expenses SET amount = ? WHERE id = ?').run(+nextAmount.toFixed(2), id);
+  return db.prepare('SELECT id, expense_date, category, amount, paid_amount, (amount - paid_amount) AS balance, description, reference FROM expenses WHERE id = ?').get(id);
 }
 
 // deleteVendorPayment — reverses the FIFO allocations then drops the row.
@@ -4360,6 +4381,7 @@ module.exports = {
   listVendorPayments,
   createVendorPayment,
   deleteVendorPayment,
+  updateVendorExpenseAmount,
   getVendor,
   createVendor,
   updateVendor,

@@ -23,6 +23,8 @@ export default function Vendors() {
 
   const [detailVendor, setDetailVendor] = useState(null);
   const [detail, setDetail] = useState(null); // { total_billed, total_paid, outstanding, expenses, payments }
+  const [editingExpense, setEditingExpense] = useState(null);
+  const [expenseAmount, setExpenseAmount] = useState('');
 
   const load = () => window.api.vendors.list().then(setRows);
   useEffect(() => { load(); }, []);
@@ -50,7 +52,10 @@ export default function Vendors() {
     } catch (e) { toast.error(e.message); }
   };
 
-  const openPay = (v) => { setPayTarget(v); setPayForm(emptyPayment()); };
+  const openPay = (v) => {
+    if (!(Number(v.outstanding) > 0.001)) return toast.error('This vendor has no outstanding balance');
+    setPayTarget(v); setPayForm(emptyPayment());
+  };
   const savePay = async () => {
     const amt = Number(payForm.amount);
     if (!Number.isFinite(amt) || amt <= 0) return toast.error('Enter a payment amount');
@@ -90,6 +95,18 @@ export default function Vendors() {
       toast.success('Payment deleted');
       load();
       openHistory(detailVendor);
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const saveExpenseAmount = async () => {
+    const amount = Number(expenseAmount);
+    if (!Number.isFinite(amount) || amount <= 0) return toast.error('Amount must be greater than zero');
+    try {
+      await window.api.expenses.updateAmount(editingExpense.id, amount);
+      toast.success('Expense amount updated');
+      setEditingExpense(null);
+      await load();
+      if (detailVendor) await openHistory(detailVendor);
     } catch (e) { toast.error(e.message); }
   };
 
@@ -183,13 +200,15 @@ export default function Vendors() {
                     {r.outstanding > 0 ? inr(r.outstanding) : '—'}
                   </td>
                   <td className="td text-right whitespace-nowrap">
-                    <button
-                      className={'text-xs mr-1 ' + (r.outstanding > 0 ? 'btn-primary' : 'btn-secondary')}
-                      onClick={() => openPay(r)}
-                      title={r.outstanding > 0 ? 'Record payment against outstanding' : 'Record advance / payment'}
-                    >
-                      + Pay
-                    </button>
+                    {r.outstanding > 0.001 && (
+                      <button
+                        className="btn-primary text-xs mr-1"
+                        onClick={() => openPay(r)}
+                        title="Record payment against outstanding"
+                      >
+                        + Pay
+                      </button>
+                    )}
                     <button className="btn-ghost text-xs" onClick={() => openHistory(r)}>History</button>
                     <button className="btn-ghost text-xs" onClick={() => openEdit(r)}>Edit</button>
                     <button className="btn-ghost text-xs text-red-600" onClick={() => remove(r)}>Delete</button>
@@ -352,11 +371,12 @@ export default function Vendors() {
                       <th className="th text-right">Billed</th>
                       <th className="th text-right">Paid</th>
                       <th className="th text-right">Balance</th>
+                      <th className="th text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {detail.expenses.length === 0 && (
-                      <tr><td colSpan={6} className="td text-center text-slate-400 py-6 text-xs">No expenses yet.</td></tr>
+                      <tr><td colSpan={7} className="td text-center text-slate-400 py-6 text-xs">No expenses yet.</td></tr>
                     )}
                     {detail.expenses.map((e) => (
                       <tr key={e.id} className="hover:bg-slate-50">
@@ -368,6 +388,9 @@ export default function Vendors() {
                         <td className={'td text-right tabular-nums ' + (e.balance > 0 ? 'text-amber-700 font-semibold' : 'text-slate-400')}>
                           {e.balance > 0 ? inr(e.balance) : '—'}
                         </td>
+                        <td className="td text-right">
+                          <button className="btn-ghost text-xs" onClick={() => { setEditingExpense(e); setExpenseAmount(String(e.amount)); }}>Edit amount</button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -377,7 +400,7 @@ export default function Vendors() {
           </div>
         )}
         <div className="p-5 border-t border-slate-200 flex justify-end gap-2">
-          {detailVendor && (
+          {detailVendor && detail && detail.outstanding > 0.001 && (
             <button
               className="btn-primary"
               onClick={() => { const v = detailVendor; setDetailVendor(null); setDetail(null); openPay(v); }}
@@ -386,6 +409,23 @@ export default function Vendors() {
             </button>
           )}
           <button className="btn-secondary" onClick={() => { setDetailVendor(null); setDetail(null); }}>Close</button>
+        </div>
+      </Modal>
+
+      <Modal open={!!editingExpense} title="Edit expense amount" onClose={() => setEditingExpense(null)}>
+        {editingExpense && (
+          <div className="p-5 space-y-3">
+            <div className="text-sm text-slate-600">{editingExpense.description || editingExpense.category} · Paid {inr(editingExpense.paid_amount)}</div>
+            <div>
+              <label className="label">Billed amount *</label>
+              <input type="number" min={editingExpense.paid_amount || 0.01} step="0.01" className="input" value={expenseAmount} onChange={(e) => setExpenseAmount(e.target.value)} autoFocus />
+            </div>
+            <div className="text-xs text-slate-500">The amount cannot be lower than the amount already paid.</div>
+          </div>
+          )}
+        <div className="p-5 border-t border-slate-200 flex justify-end gap-2">
+          <button className="btn-secondary" onClick={() => setEditingExpense(null)}>Cancel</button>
+          <button className="btn-primary" onClick={saveExpenseAmount}>Save amount</button>
         </div>
       </Modal>
     </>

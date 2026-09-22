@@ -183,6 +183,7 @@ export function createHttpApi() {
       get: (id) => req('GET', `/expenses/${id}`),
       create: (e) => req('POST', '/expenses', e),
       update: (e) => req('PATCH', `/expenses/${e.id}`, e),
+      updateAmount: (id, amount) => req('PATCH', `/expenses/${id}/amount`, { amount }),
       remove: (id) => req('DELETE', `/expenses/${id}`),
       categories: () => req('GET', '/expenses/categories'),
       stats: (filters) => {
