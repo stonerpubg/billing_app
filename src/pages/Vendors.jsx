@@ -20,6 +20,7 @@ export default function Vendors() {
 
   const [payTarget, setPayTarget] = useState(null); // vendor row
   const [payForm, setPayForm] = useState(emptyPayment());
+  const [payExpenseTarget, setPayExpenseTarget] = useState(null);
 
   const [detailVendor, setDetailVendor] = useState(null);
   const [detail, setDetail] = useState(null); // { total_billed, total_paid, outstanding, expenses, payments }
@@ -76,6 +77,34 @@ export default function Vendors() {
       setPayTarget(null);
       load();
       if (detailVendor?.id === payTarget.id) openHistory(payTarget); // refresh open history
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const openExpensePay = (expense) => {
+    if (!(Number(expense.balance) > 0.001)) return toast.error('This purchase has no outstanding balance');
+    setPayExpenseTarget(expense);
+    setPayForm({ ...emptyPayment(), amount: String(expense.balance) });
+  };
+
+  const saveExpensePay = async () => {
+    if (!payExpenseTarget) return;
+    const amt = Number(payForm.amount);
+    if (!Number.isFinite(amt) || amt <= 0) return toast.error('Enter a payment amount');
+    if (!payForm.payment_date) return toast.error('Pick a payment date');
+    if (amt > Number(payExpenseTarget.balance) + 0.001) return toast.error(`Payment cannot exceed balance (${inr(payExpenseTarget.balance)})`);
+    try {
+      await window.api.vendors.pay(detailVendor.id, {
+        expense_id: payExpenseTarget.id,
+        payment_date: payForm.payment_date,
+        amount: amt,
+        mode: payForm.mode,
+        reference: payForm.reference,
+        notes: payForm.notes,
+      });
+      toast.success('Payment recorded against purchase');
+      setPayExpenseTarget(null);
+      await load();
+      await openHistory(detailVendor);
     } catch (e) { toast.error(e.message); }
   };
 
@@ -326,12 +355,13 @@ export default function Vendors() {
 
             <div>
               <div className="text-xs uppercase font-semibold text-slate-500 mb-2">Payments ({detail.payments.length})</div>
-              <div className="border rounded overflow-hidden">
+              <div className="border rounded overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50">
                     <tr>
                       <th className="th">Date</th>
                       <th className="th text-right">Amount</th>
+                      <th className="th">Purchase</th>
                       <th className="th">Mode</th>
                       <th className="th">Reference</th>
                       <th className="th">Notes</th>
@@ -340,12 +370,17 @@ export default function Vendors() {
                   </thead>
                   <tbody>
                     {detail.payments.length === 0 && (
-                      <tr><td colSpan={6} className="td text-center text-slate-400 py-6 text-xs">No payments recorded yet.</td></tr>
+                      <tr><td colSpan={7} className="td text-center text-slate-400 py-6 text-xs">No payments recorded yet.</td></tr>
                     )}
                     {detail.payments.map((p) => (
                       <tr key={p.id} className="hover:bg-slate-50">
                         <td className="td whitespace-nowrap">{p.payment_date}</td>
                         <td className="td text-right tabular-nums text-emerald-700 font-semibold">{inr(p.amount)}</td>
+                        <td className="td text-xs">
+                          {p.allocations?.length
+                            ? p.allocations.map((a) => `${a.description || a.category || 'Purchase'} (${inr(a.allocated_amount)})`).join('; ')
+                            : '—'}
+                        </td>
                         <td className="td">{p.mode || '—'}</td>
                         <td className="td text-xs">{p.reference || '—'}</td>
                         <td className="td text-xs">{p.notes || '—'}</td>
@@ -361,8 +396,8 @@ export default function Vendors() {
 
             <div>
               <div className="text-xs uppercase font-semibold text-slate-500 mb-2">Expenses ({detail.expenses.length})</div>
-              <div className="border rounded overflow-hidden">
-                <table className="w-full text-sm">
+              <div className="border rounded overflow-x-auto">
+                <table className="w-full min-w-[760px] text-sm">
                   <thead className="bg-slate-50">
                     <tr>
                       <th className="th">Date</th>
@@ -388,7 +423,8 @@ export default function Vendors() {
                         <td className={'td text-right tabular-nums ' + (e.balance > 0 ? 'text-amber-700 font-semibold' : 'text-slate-400')}>
                           {e.balance > 0 ? inr(e.balance) : '—'}
                         </td>
-                        <td className="td text-right">
+                        <td className="td text-right whitespace-nowrap">
+                          {e.balance > 0.001 && <button className="btn-primary text-xs mr-1" onClick={() => openExpensePay(e)}>Pay</button>}
                           <button className="btn-ghost text-xs" onClick={() => { setEditingExpense(e); setExpenseAmount(String(e.amount)); }}>Edit amount</button>
                         </td>
                       </tr>
@@ -409,6 +445,45 @@ export default function Vendors() {
             </button>
           )}
           <button className="btn-secondary" onClick={() => { setDetailVendor(null); setDetail(null); }}>Close</button>
+        </div>
+      </Modal>
+
+      <Modal open={!!payExpenseTarget} title={payExpenseTarget ? `Pay purchase — ${detailVendor?.name || ''}` : ''} onClose={() => setPayExpenseTarget(null)} size="lg">
+        {payExpenseTarget && (
+          <div className="p-5 space-y-3">
+            <div className="text-sm text-slate-700">
+              <strong>{payExpenseTarget.description || payExpenseTarget.category}</strong>
+              <div className="text-xs text-slate-500 mt-1">Billed {inr(payExpenseTarget.amount)} · Paid {inr(payExpenseTarget.paid_amount)} · Balance {inr(payExpenseTarget.balance)}</div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="label">Payment date *</label>
+                <input type="date" className="input" value={payForm.payment_date} onChange={(e) => setPayForm({ ...payForm, payment_date: e.target.value })} />
+              </div>
+              <div>
+                <label className="label">Amount *</label>
+                <input type="number" min="0.01" step="0.01" max={payExpenseTarget.balance} className="input" value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })} autoFocus />
+              </div>
+              <div>
+                <label className="label">Mode</label>
+                <select className="input" value={payForm.mode} onChange={(e) => setPayForm({ ...payForm, mode: e.target.value })}>
+                  {['Cash', 'UPI', 'Bank', 'Cheque', 'Card', 'Other'].map((m) => <option key={m}>{m}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">Reference</label>
+                <input className="input" value={payForm.reference} onChange={(e) => setPayForm({ ...payForm, reference: e.target.value })} />
+              </div>
+              <div className="md:col-span-2">
+                <label className="label">Notes</label>
+                <input className="input" value={payForm.notes} onChange={(e) => setPayForm({ ...payForm, notes: e.target.value })} />
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="p-5 border-t border-slate-200 flex justify-end gap-2">
+          <button className="btn-secondary" onClick={() => setPayExpenseTarget(null)}>Cancel</button>
+          <button className="btn-primary" onClick={saveExpensePay}>Record payment</button>
         </div>
       </Modal>
 

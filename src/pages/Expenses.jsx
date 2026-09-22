@@ -344,7 +344,17 @@ export default function Expenses() {
             Total: <span className="font-bold text-slate-800">{inr(totalShown)}</span>
           </div>
         </div>
-        <div className="overflow-x-auto">
+        <div
+          className="overflow-x-auto"
+          onWheel={(e) => {
+            const container = e.currentTarget;
+            if (container.scrollWidth <= container.clientWidth) return;
+            if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+              e.preventDefault();
+              container.scrollLeft += e.deltaY;
+            }
+          }}
+        >
         <table className="w-full min-w-[1050px]">
           <thead>
             <tr>

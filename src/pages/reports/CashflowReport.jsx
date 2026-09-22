@@ -20,6 +20,7 @@ export default function CashflowReport() {
           { key: 'kind', label: 'Type', format: (v) => v },
           { key: 'source', label: 'Source' },
           { key: 'party', label: 'Party' },
+          { key: 'purchase', label: 'Purchase' },
           { key: 'description', label: 'Purpose' },
           { key: 'mode', label: 'Mode' },
           { key: 'reference', label: 'Reference' },
@@ -29,7 +30,7 @@ export default function CashflowReport() {
         ],
         rows: data.transactions,
         totals: [
-          { text: 'TOTAL', align: 'right', colSpan: 7 },
+          { text: 'TOTAL', align: 'right', colSpan: 8 },
           { text: inr(data.total_credit), align: 'right' },
           { text: inr(data.total_debit), align: 'right' },
           { text: inr(data.net), align: 'right' },

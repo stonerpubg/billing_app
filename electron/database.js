@@ -1770,13 +1770,22 @@ function deleteVendor(id) {
 // -------- Vendor payments --------
 // listVendorPayments — dated payment history for a vendor, newest first
 function listVendorPayments(vendorId) {
-  return db.prepare(
+  const payments = db.prepare(
     `SELECT vp.*,
             (SELECT COALESCE(SUM(a.amount), 0) FROM vendor_payment_allocations a WHERE a.vendor_payment_id = vp.id) AS applied_amount
        FROM vendor_payments vp
       WHERE vp.vendor_id = ?
       ORDER BY vp.payment_date DESC, vp.id DESC`
   ).all(vendorId);
+  const allocations = db.prepare(
+    `SELECT a.amount AS allocated_amount, e.id AS expense_id, e.expense_date, e.category,
+            e.description, e.amount AS expense_amount
+       FROM vendor_payment_allocations a
+       JOIN expenses e ON e.id = a.expense_id
+      WHERE a.vendor_payment_id = ?
+      ORDER BY e.expense_date ASC, e.id ASC`
+  );
+  return payments.map((payment) => ({ ...payment, allocations: allocations.all(payment.id) }));
 }
 
 // vendorSummary — total billed/paid/outstanding + payment + expense history
@@ -1814,7 +1823,7 @@ function vendorSummary(vendorId) {
 // applies it across their oldest unpaid expenses (updating paid_amount).
 // Extra amount above the total outstanding is stored on the payment row as an
 // "advance" (applied is capped at total outstanding); the UI can flag that.
-function createVendorPayment({ vendor_id, payment_date, amount, mode, reference, notes }) {
+function createVendorPayment({ vendor_id, expense_id, payment_date, amount, mode, reference, notes }) {
   const vid = Number(vendor_id);
   if (!vid) return { ok: false, error: 'vendor_id is required' };
   if (!payment_date) return { ok: false, error: 'payment_date is required' };
@@ -1822,9 +1831,16 @@ function createVendorPayment({ vendor_id, payment_date, amount, mode, reference,
   if (!Number.isFinite(amt) || amt <= 0) return { ok: false, error: 'amount must be greater than zero' };
   const vendor = db.prepare('SELECT id FROM vendors WHERE id = ?').get(vid);
   if (!vendor) return { ok: false, error: 'Vendor not found' };
+  const expenseId = expense_id == null || expense_id === '' ? null : Number(expense_id);
+  if (expenseId != null) {
+    const expense = db.prepare('SELECT id FROM expenses WHERE id = ? AND vendor_id = ?').get(expenseId, vid);
+    if (!expense) return { ok: false, error: 'Purchase not found for this vendor' };
+  }
   const outstandingTotal = db.prepare(
-    'SELECT COALESCE(SUM(amount - paid_amount), 0) AS outstanding FROM expenses WHERE vendor_id = ?'
-  ).get(vid).outstanding;
+    `SELECT COALESCE(SUM(amount - paid_amount), 0) AS outstanding
+       FROM expenses
+      WHERE vendor_id = ?${expenseId == null ? '' : ' AND id = ?'}`
+  ).get(...(expenseId == null ? [vid] : [vid, expenseId])).outstanding;
   if (outstandingTotal <= 0.001) return { ok: false, error: 'This vendor has no outstanding balance' };
   if (amt > outstandingTotal + 0.001) {
     return { ok: false, error: `Payment cannot exceed outstanding balance (${Number(outstandingTotal).toFixed(2)})` };
@@ -1847,9 +1863,9 @@ function createVendorPayment({ vendor_id, payment_date, amount, mode, reference,
     const outstanding = db.prepare(
       `SELECT id, amount, paid_amount
          FROM expenses
-        WHERE vendor_id = ? AND (amount - paid_amount) > 0.001
+      WHERE vendor_id = ?${expenseId == null ? '' : ' AND id = ?'} AND (amount - paid_amount) > 0.001
         ORDER BY expense_date ASC, id ASC`
-    ).all(vid);
+    ).all(...(expenseId == null ? [vid] : [vid, expenseId]));
     let remaining = amt;
     for (const e of outstanding) {
       if (remaining <= 0.001) break;
@@ -2199,6 +2215,19 @@ function recordExpensePayment(expenseId, amount) {
   const owing = Math.max(0, Number(e.amount) - (Number(e.paid_amount) || 0));
   if (!Number.isFinite(add) || add <= 0) throw new Error('Payment amount must be > 0');
   if (add > owing) throw new Error(`Payment cannot exceed owing amount (${owing.toFixed(2)})`);
+  if (e.vendor_id) {
+    const result = createVendorPayment({
+      vendor_id: e.vendor_id,
+      expense_id: e.id,
+      payment_date: new Date().toISOString().slice(0, 10),
+      amount: add,
+      mode: e.payment_mode || 'Cash',
+      reference: e.reference || '',
+      notes: `Payment for ${e.description || e.category || 'purchase'}`,
+    });
+    if (!result.ok) throw new Error(result.error);
+    return getExpense(expenseId);
+  }
   const newPaid = (Number(e.paid_amount) || 0) + add;
   db.prepare('UPDATE expenses SET paid_amount = ? WHERE id = ?').run(newPaid, expenseId);
   return getExpense(expenseId);
@@ -2600,8 +2629,12 @@ function cashflowReport(filters = {}) {
   // Vendor settlements — subsequent payments against outstanding expenses,
   // recorded on the actual payment date (not the original purchase date).
   db.prepare(
-    `SELECT vp.payment_date AS date, vp.amount, vp.mode, vp.reference, vp.notes,
-            v.name AS vendor_name
+        `SELECT vp.payment_date AS date, vp.amount, vp.mode, vp.reference, vp.notes,
+          v.name AS vendor_name,
+          COALESCE((SELECT GROUP_CONCAT(COALESCE(e.description, e.category, 'Purchase'), '; ')
+          FROM vendor_payment_allocations a
+          JOIN expenses e ON e.id = a.expense_id
+               WHERE a.vendor_payment_id = vp.id), '') AS purchase
        FROM vendor_payments vp
        JOIN vendors v ON v.id = vp.vendor_id
       WHERE vp.payment_date >= ? AND vp.payment_date <= ?`
@@ -2610,6 +2643,7 @@ function cashflowReport(filters = {}) {
     kind: 'OUT',
     source: 'Vendor payment',
     party: r.vendor_name || '—',
+    purchase: r.purchase || '',
     description: r.notes || 'Vendor settlement',
     mode: r.mode || '',
     reference: r.reference || '',
