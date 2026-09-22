@@ -400,6 +400,11 @@ function buildQuotationPdf(q, s) {
     // Multi-face sizes ("AxB+CxD") render as a vertical stack so they wrap cleanly on the '+'.
     sno: 14, desc: '*', hsn: 38, qty: 28, unit: 24, size: 60, weight: 48, rate: 42, taxable: 48, cgst: 38, sgst: 38, total: 72,
   };
+  // Per-line GST adds two columns; keep numeric cells compact so long product
+  // descriptions still have room inside the A4 printable width.
+  if (!flatMode && D.showCgst && D.showSgst) {
+    Object.assign(columnWidth, { sno: 12, hsn: 32, qty: 24, unit: 22, size: 48, weight: 40, rate: 38, taxable: 44, cgst: 34, sgst: 34, total: 58 });
+  }
 
   // Render the Size cell. Single-group ("17.25x4.5") stays on one line.
   // Multi-group ("17.25x4.5+12.5x4.55") stacks each group as its own line.

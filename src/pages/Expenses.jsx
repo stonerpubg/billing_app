@@ -97,6 +97,9 @@ export default function Expenses() {
     if (!payingId) return;
     const amt = Number(payAmount);
     if (!(amt > 0)) return toast.error('Enter an amount > 0');
+    const row = rows.find((r) => r.id === payingId);
+    const owing = Math.max(0, (Number(row?.amount) || 0) - (Number(row?.paid_amount) || 0));
+    if (!Number.isFinite(amt) || amt > owing) return toast.error(`Payment cannot exceed owing amount (${inr(owing)})`);
     try {
       await window.api.expenses.recordPayment(payingId, amt);
       toast.success('Payment recorded');
@@ -341,7 +344,8 @@ export default function Expenses() {
             Total: <span className="font-bold text-slate-800">{inr(totalShown)}</span>
           </div>
         </div>
-        <table className="w-full">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[1050px]">
           <thead>
             <tr>
               <th className="th">Date</th>
@@ -413,6 +417,7 @@ export default function Expenses() {
             })}
           </tbody>
         </table>
+        </div>
       </div>
 
       <Modal open={showForm} title={editing ? 'Edit expense' : 'Add expense'} onClose={() => setShowForm(false)} size="lg">

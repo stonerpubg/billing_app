@@ -83,10 +83,14 @@ export default function Quotations() {
     if (!payQuote) return;
     const amt = Number(payForm.amount);
     if (!amt || amt <= 0) return toast.error('Amount must be > 0');
-    await window.api.quotePayments.add({ ...payForm, quotation_id: payQuote.id, amount: amt });
-    toast.success('Payment recorded');
-    setPayQuote(null);
-    load();
+    const balance = payQuote.balance != null ? payQuote.balance : (payQuote.grand_total - (payQuote.paid_total || 0));
+    if (!Number.isFinite(amt) || amt > balance + 0.001) return toast.error(`Payment cannot exceed balance (${inr(balance)})`);
+    try {
+      await window.api.quotePayments.add({ ...payForm, quotation_id: payQuote.id, amount: amt });
+      toast.success('Payment recorded');
+      setPayQuote(null);
+      load();
+    } catch (e) { toast.error(e.message); }
   };
 
   const markBilled = async (r) => {

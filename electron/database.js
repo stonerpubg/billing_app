@@ -50,7 +50,9 @@ function init(dataDir) {
     const cols = db.prepare(`PRAGMA table_info(${table})`).all();
     if (!cols.some((c) => c.name === column)) {
       db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${def}`);
+      return true;
     }
+    return false;
   };
 
   db.exec(`
@@ -403,10 +405,12 @@ function init(dataDir) {
   //   0 < paid < amount       → partial
   // P&L / cashflow uses paid_amount (only cash-out counts). "amount - paid_amount"
   // is what you still owe the vendor.
-  ensureColumn('expenses', 'paid_amount', 'REAL NOT NULL DEFAULT 0');
+  const addedExpensePaidAmount = ensureColumn('expenses', 'paid_amount', 'REAL NOT NULL DEFAULT 0');
   // Back-fill: pre-existing rows are treated as fully paid.
   try {
-    db.prepare('UPDATE expenses SET paid_amount = amount WHERE paid_amount = 0 AND amount > 0').run();
+    if (addedExpensePaidAmount) {
+      db.prepare('UPDATE expenses SET paid_amount = amount WHERE paid_amount = 0 AND amount > 0').run();
+    }
   } catch (_e) { /* idempotent */ }
   // Shift-based attendance + pay
   ensureColumn('attendance', 'shifts_worked', 'REAL NOT NULL DEFAULT 0');
@@ -435,14 +439,6 @@ function init(dataDir) {
   try {
     db.prepare('UPDATE payroll_entries SET paid_amount = net_pay WHERE paid = 1 AND paid_amount = 0').run();
   } catch (_e) { /* idempotent */ }
-  // Income partial-receipt tracking. `amount` = total the customer owes for this receipt,
-  // `received_amount` = actually collected so far. Balance = amount - received_amount.
-  // Only received_amount contributes to Dashboard / P&L "Income" totals.
-  ensureColumn('incomes', 'received_amount', 'REAL NOT NULL DEFAULT 0');
-  try {
-    db.prepare('UPDATE incomes SET received_amount = amount WHERE received_amount = 0 AND amount > 0').run();
-  } catch (_e) { /* idempotent */ }
-
   // ---- Migrations for existing DBs (safe if columns already exist) ----
   ensureColumn('quotation_items', 'size', 'TEXT');
   ensureColumn('quotations', 'gst_mode', "TEXT NOT NULL DEFAULT 'per_line'");
@@ -516,6 +512,13 @@ function init(dataDir) {
     CREATE INDEX IF NOT EXISTS idx_advdec_run ON advance_deductions(run_id);
     CREATE INDEX IF NOT EXISTS idx_advdec_emp_run ON advance_deductions(employee_id, run_id);
   `);
+
+  // Income partial-receipt tracking. The table is created above for fresh databases;
+  // existing databases receive the column here during migration.
+  ensureColumn('incomes', 'received_amount', 'REAL NOT NULL DEFAULT 0');
+  try {
+    db.prepare('UPDATE incomes SET received_amount = amount WHERE received_amount = 0 AND amount > 0').run();
+  } catch (_e) { /* idempotent */ }
 
   // One-time backfill: existing advances with adjusted_in_run_id NOT NULL represent
   // fully-deducted rows under the old binary model. Insert an advance_deductions row
@@ -809,41 +812,58 @@ function updateSettings(patch) {
   return getSettings();
 }
 
+function parseNonNegativeNumber(value, fallback, label) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) throw new Error(`${label} must be a valid non-negative number`);
+  return number;
+}
+
 // -------- Products --------
 function listProducts() {
   return db.prepare('SELECT * FROM products ORDER BY name ASC').all();
 }
 function createProduct(p) {
+  const name = String(p.name || '').trim();
+  if (!name) throw new Error('Product name is required');
+  const rate = parseNonNegativeNumber(p.rate, 0, 'Product rate');
+  const gstRate = parseNonNegativeNumber(p.gst_rate, 0, 'GST rate');
+  if (gstRate > 100) throw new Error('GST rate must be between 0 and 100');
   const info = db
     .prepare(
       `INSERT INTO products (name, description, category, hsn_code, unit, rate, gst_rate, is_active)
        VALUES (@name, @description, @category, @hsn_code, @unit, @rate, @gst_rate, @is_active)`
     )
     .run({
-      name: p.name,
+      name,
       description: p.description || '',
       category: p.category || '',
       hsn_code: p.hsn_code || '',
       unit: p.unit || 'Nos',
-      rate: Number(p.rate) || 0,
-      gst_rate: Number(p.gst_rate) || 0,
+      rate,
+      gst_rate: gstRate,
       is_active: p.is_active === 0 ? 0 : 1,
     });
   return db.prepare('SELECT * FROM products WHERE id = ?').get(info.lastInsertRowid);
 }
 function updateProduct(p) {
+  const name = String(p.name || '').trim();
+  if (!name) throw new Error('Product name is required');
+  const rate = parseNonNegativeNumber(p.rate, 0, 'Product rate');
+  const gstRate = parseNonNegativeNumber(p.gst_rate, 0, 'GST rate');
+  if (gstRate > 100) throw new Error('GST rate must be between 0 and 100');
   db.prepare(
     `UPDATE products SET name=@name, description=@description, category=@category,
        hsn_code=@hsn_code, unit=@unit, rate=@rate, gst_rate=@gst_rate, is_active=@is_active WHERE id=@id`
   ).run({
     id: p.id,
-    name: p.name,
+    name,
     description: p.description || '',
     category: p.category || '',
     hsn_code: p.hsn_code || '',
     unit: p.unit || 'Nos',
-    rate: Number(p.rate) || 0,
-    gst_rate: Number(p.gst_rate) || 0,
+    rate,
+    gst_rate: gstRate,
     is_active: p.is_active === 0 ? 0 : 1,
   });
   return db.prepare('SELECT * FROM products WHERE id = ?').get(p.id);
@@ -858,13 +878,15 @@ function listCustomers() {
   return db.prepare('SELECT * FROM customers ORDER BY name ASC').all();
 }
 function createCustomer(c) {
+  const name = String(c.name || '').trim();
+  if (!name) throw new Error('Customer name is required');
   const info = db
     .prepare(
       `INSERT INTO customers (name, contact_person, phone, email, gstin, address, city, state, pincode)
        VALUES (@name, @contact_person, @phone, @email, @gstin, @address, @city, @state, @pincode)`
     )
     .run({
-      name: c.name,
+      name,
       contact_person: c.contact_person || '',
       phone: c.phone || '',
       email: c.email || '',
@@ -877,12 +899,14 @@ function createCustomer(c) {
   return db.prepare('SELECT * FROM customers WHERE id = ?').get(info.lastInsertRowid);
 }
 function updateCustomer(c) {
+  const name = String(c.name || '').trim();
+  if (!name) throw new Error('Customer name is required');
   db.prepare(
     `UPDATE customers SET name=@name, contact_person=@contact_person, phone=@phone, email=@email,
      gstin=@gstin, address=@address, city=@city, state=@state, pincode=@pincode WHERE id=@id`
   ).run({
     id: c.id,
-    name: c.name,
+    name,
     contact_person: c.contact_person || '',
     phone: c.phone || '',
     email: c.email || '',
@@ -954,12 +978,15 @@ function parseWeight(weight) {
 }
 
 function computeTotals(items, gstMode = 'per_line', flatGstRate = 18) {
+  const safeFlatGstRate = parseNonNegativeNumber(flatGstRate, 18, 'GST rate');
+  if (safeFlatGstRate > 100) throw new Error('GST rate must be between 0 and 100');
   let subtotal = 0;
   let gstTotal = 0;
   const enriched = items.map((it, idx) => {
-    const quantity = Number(it.quantity) || 0;
-    const rate = Number(it.rate) || 0;
-    const gstRate = Number(it.gst_rate) || 0;
+    const quantity = parseNonNegativeNumber(it.quantity, 0, `Item ${idx + 1} quantity`);
+    const rate = parseNonNegativeNumber(it.rate, 0, `Item ${idx + 1} rate`);
+    const gstRate = parseNonNegativeNumber(it.gst_rate, 0, `Item ${idx + 1} GST rate`);
+    if (gstRate > 100) throw new Error(`Item ${idx + 1} GST rate must be between 0 and 100`);
     const sizeMult = parseSize(it.size);
     const weightNum = parseWeight(it.weight);
     const priceBy = it.price_by === 'weight' ? 'weight' : 'size';
@@ -991,7 +1018,7 @@ function computeTotals(items, gstMode = 'per_line', flatGstRate = 18) {
   });
 
   if (gstMode === 'flat_on_total') {
-    gstTotal = +((subtotal * (Number(flatGstRate) || 0)) / 100).toFixed(2);
+    gstTotal = +((subtotal * safeFlatGstRate) / 100).toFixed(2);
   }
   const grandTotal = +(subtotal + gstTotal).toFixed(2);
 
@@ -1071,6 +1098,13 @@ function listQuotePayments(quotationId) {
 }
 
 function addQuotePayment(payment) {
+  const quotation = db.prepare('SELECT grand_total, paid_total FROM quotations WHERE id = ?').get(payment.quotation_id);
+  if (!quotation) throw new Error('Quotation not found');
+  const amount = Number(payment.amount);
+  const balance = Math.max(0, Number(quotation.grand_total) - (Number(quotation.paid_total) || 0));
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error('Payment amount must be greater than 0');
+  if (amount > balance + 0.001) throw new Error(`Payment cannot exceed balance (${balance.toFixed(2)})`);
+  if (!payment.payment_date) throw new Error('Payment date is required');
   const info = db
     .prepare(
       `INSERT INTO quote_payments (quotation_id, payment_date, amount, mode, reference, notes)
@@ -1079,7 +1113,7 @@ function addQuotePayment(payment) {
     .run({
       quotation_id: payment.quotation_id,
       payment_date: payment.payment_date,
-      amount: Number(payment.amount) || 0,
+      amount: +amount.toFixed(2),
       mode: payment.mode || 'Cash',
       reference: payment.reference || '',
       notes: payment.notes || '',
@@ -1235,6 +1269,9 @@ function deleteQuotation(id) {
 }
 
 function updateQuotationStatus(id, status) {
+  if (!['Draft', 'Pending', 'Sent', 'Accepted', 'Rejected', 'Expired', 'Billed', 'Lost'].includes(status)) {
+    throw new Error('Invalid quotation status');
+  }
   db.prepare("UPDATE quotations SET status = ?, updated_at = datetime('now') WHERE id = ?").run(
     status,
     id
@@ -1531,6 +1568,13 @@ function deleteInvoice(id) {
 }
 
 function addPayment(payment) {
+  const invoice = db.prepare('SELECT grand_total, paid_total FROM invoices WHERE id = ?').get(payment.invoice_id);
+  if (!invoice) throw new Error('Invoice not found');
+  const amount = Number(payment.amount);
+  const balance = Math.max(0, Number(invoice.grand_total) - (Number(invoice.paid_total) || 0));
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error('Payment amount must be greater than 0');
+  if (amount > balance + 0.001) throw new Error(`Payment cannot exceed balance (${balance.toFixed(2)})`);
+  if (!payment.payment_date) throw new Error('Payment date is required');
   const info = db
     .prepare(
       `INSERT INTO payments (invoice_id, payment_date, amount, mode, reference, notes)
@@ -1539,7 +1583,7 @@ function addPayment(payment) {
     .run({
       invoice_id: payment.invoice_id,
       payment_date: payment.payment_date,
-      amount: Number(payment.amount) || 0,
+      amount: +amount.toFixed(2),
       mode: payment.mode || 'Cash',
       reference: payment.reference || '',
       notes: payment.notes || '',
@@ -2130,9 +2174,11 @@ function updateExpense(e) {
 function recordExpensePayment(expenseId, amount) {
   const e = getExpense(expenseId);
   if (!e) throw new Error('Expense not found');
-  const add = Number(amount) || 0;
-  if (add <= 0) throw new Error('Payment amount must be > 0');
-  const newPaid = Math.min(e.amount, (e.paid_amount || 0) + add);
+  const add = Number(amount);
+  const owing = Math.max(0, Number(e.amount) - (Number(e.paid_amount) || 0));
+  if (!Number.isFinite(add) || add <= 0) throw new Error('Payment amount must be > 0');
+  if (add > owing) throw new Error(`Payment cannot exceed owing amount (${owing.toFixed(2)})`);
+  const newPaid = (Number(e.paid_amount) || 0) + add;
   db.prepare('UPDATE expenses SET paid_amount = ? WHERE id = ?').run(newPaid, expenseId);
   return getExpense(expenseId);
 }

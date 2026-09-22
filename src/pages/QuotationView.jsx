@@ -39,21 +39,23 @@ export default function QuotationView() {
     const amt = Number(payment.amount);
     if (!amt || amt <= 0) return toast.error('Amount must be > 0');
     const balance = q.balance != null ? q.balance : (q.grand_total - (q.paid_total || 0));
-    if (amt > balance + 0.01) {
-      if (!confirm(`Amount ${inr(amt)} is greater than the balance ${inr(balance)}. Continue?`)) return;
-    }
-    await window.api.quotePayments.add({ ...payment, quotation_id: q.id, amount: amt });
-    toast.success('Payment recorded');
-    setShowPayment(false);
-    setPayment({ payment_date: today(), amount: 0, mode: 'Cash', reference: '', notes: '' });
-    reload();
+    if (!Number.isFinite(amt) || amt > balance + 0.001) return toast.error(`Payment cannot exceed balance (${inr(balance)})`);
+    try {
+      await window.api.quotePayments.add({ ...payment, quotation_id: q.id, amount: amt });
+      toast.success('Payment recorded');
+      setShowPayment(false);
+      setPayment({ payment_date: today(), amount: 0, mode: 'Cash', reference: '', notes: '' });
+      reload();
+    } catch (e) { toast.error(e.message); }
   };
 
   const removePayment = async (pid) => {
     if (!confirm('Delete this payment?')) return;
-    await window.api.quotePayments.remove(pid);
-    toast.success('Payment removed');
-    reload();
+    try {
+      await window.api.quotePayments.remove(pid);
+      toast.success('Payment removed');
+      reload();
+    } catch (e) { toast.error(e.message); }
   };
 
   if (!q || !settings) return <div className="text-slate-500">Loading…</div>;
@@ -62,9 +64,11 @@ export default function QuotationView() {
 
   const remove = async () => {
     if (!confirm(`Delete quotation ${q.quote_number}?`)) return;
-    await window.api.quotations.remove(q.id);
-    toast.success('Deleted');
-    nav('/quotations');
+    try {
+      await window.api.quotations.remove(q.id);
+      toast.success('Deleted');
+      nav('/quotations');
+    } catch (e) { toast.error(e.message); }
   };
 
   const exportPdf = async () => {

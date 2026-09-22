@@ -688,7 +688,7 @@ export default function PdfHtmlMock({ values, settings, quotation, selected, onS
               onClick={tableClick}
               style={{ ...outlineStyle('items'), cursor: 'pointer' }}
             >
-              <table style={{ width: '100%', borderCollapse: 'collapse', border: `0.5px solid ${border}` }}>
+              <table style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse', border: `0.5px solid ${border}` }}>
                 <thead>
                   <tr style={{ background: brand, color: '#fff' }}>
                     <th data-region="col_sno" onClick={colClick('col_sno')} style={thStyle('col_sno', { textAlign: 'center' })}>S.No</th>
@@ -710,7 +710,7 @@ export default function PdfHtmlMock({ values, settings, quotation, selected, onS
                     return (
                     <tr key={i}>
                       <td style={{ padding: cellPad, fontSize: fontItems, textAlign: 'center', border: `0.5px solid ${border}` }}>{i + 1}</td>
-                      <td style={{ padding: cellPad, fontSize: fontItems, border: `0.5px solid ${border}` }}>
+                      <td style={{ padding: cellPad, fontSize: fontItems, border: `0.5px solid ${border}`, overflowWrap: 'anywhere' }}>
                         <div style={{ fontWeight: 700 }}>{it.name}</div>
                         {it.description && <div style={{ fontSize: fontItemsXs, color: muted, fontStyle: 'italic' }}>{it.description}</div>}
                       </td>

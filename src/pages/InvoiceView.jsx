@@ -55,29 +55,33 @@ export default function InvoiceView() {
 
   const remove = async () => {
     if (!confirm(`Delete invoice ${inv.invoice_number}?`)) return;
-    await window.api.invoices.remove(inv.id);
-    toast.success('Invoice deleted');
-    nav('/invoices');
+    try {
+      await window.api.invoices.remove(inv.id);
+      toast.success('Invoice deleted');
+      nav('/invoices');
+    } catch (e) { toast.error(e.message); }
   };
 
   const addPayment = async () => {
     const amt = Number(payment.amount);
     if (!amt || amt <= 0) return toast.error('Enter a positive amount');
-    if (amt > balance + 0.01) {
-      if (!confirm(`Amount ${inr(amt)} is larger than balance ${inr(balance)}. Proceed?`)) return;
-    }
-    await window.api.payments.add({ ...payment, invoice_id: inv.id, amount: amt });
-    toast.success('Payment recorded');
-    setShowPayment(false);
-    setPayment({ payment_date: today(), amount: 0, mode: 'Cash', reference: '', notes: '' });
-    load();
+    if (!Number.isFinite(amt) || amt > balance + 0.001) return toast.error(`Payment cannot exceed balance (${inr(balance)})`);
+    try {
+      await window.api.payments.add({ ...payment, invoice_id: inv.id, amount: amt });
+      toast.success('Payment recorded');
+      setShowPayment(false);
+      setPayment({ payment_date: today(), amount: 0, mode: 'Cash', reference: '', notes: '' });
+      load();
+    } catch (e) { toast.error(e.message); }
   };
 
   const removePayment = async (pid) => {
     if (!confirm('Delete this payment?')) return;
-    await window.api.payments.remove(pid);
-    toast.success('Payment removed');
-    load();
+    try {
+      await window.api.payments.remove(pid);
+      toast.success('Payment removed');
+      load();
+    } catch (e) { toast.error(e.message); }
   };
 
   return (
