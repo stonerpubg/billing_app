@@ -930,14 +930,27 @@ function formatQuoteNumber(n) {
   return `${prefix}${String(n).padStart(pad, '0')}`;
 }
 
-function peekNextQuoteNumber() {
+function nextAvailableQuoteNumber() {
   const settings = getSettings();
-  const n = Number(settings.quote_next_number || 1);
+  const prefix = settings.quote_prefix || 'MRL/Q/';
+  const configuredNext = Number(settings.quote_next_number || 1);
+  const existing = db.prepare('SELECT quote_number FROM quotations').all();
+  let highestExisting = 0;
+  for (const row of existing) {
+    if (!row.quote_number || !row.quote_number.startsWith(prefix)) continue;
+    const suffix = row.quote_number.slice(prefix.length);
+    if (/^\d+$/.test(suffix)) highestExisting = Math.max(highestExisting, Number(suffix));
+  }
+  return Math.max(1, configuredNext, highestExisting + 1);
+}
+
+function peekNextQuoteNumber() {
+  const n = nextAvailableQuoteNumber();
   return { number: formatQuoteNumber(n), rawNumber: n };
 }
 
 function bumpQuoteNumber() {
-  const cur = Number(getSettings().quote_next_number || 1);
+  const cur = nextAvailableQuoteNumber();
   const nextVal = cur + 1;
   db.prepare(
     "UPDATE settings SET value = ? WHERE key = 'quote_next_number'"
