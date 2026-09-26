@@ -513,11 +513,19 @@ function init(dataDir) {
     CREATE INDEX IF NOT EXISTS idx_advdec_emp_run ON advance_deductions(employee_id, run_id);
   `);
 
-  // Income partial-receipt tracking. The table is created above for fresh databases;
-  // existing databases receive the column here during migration.
+  // Income partial-receipt tracking. The column is added here for pre-existing
+  // databases; new schemas already have it.
   ensureColumn('incomes', 'received_amount', 'REAL NOT NULL DEFAULT 0');
+  // Historical note: a legacy migration used to run
+  //   UPDATE incomes SET received_amount = amount WHERE received_amount = 0 AND amount > 0
+  // on EVERY boot to backfill data from before this column existed. That
+  // silently re-flipped intentionally-created Credit rows (received_amount
+  // deliberately 0) back to Paid on the next login. We stopped running it
+  // and just mark the backfill as done so it never re-fires; users have
+  // long since booted the app enough times that the original backfill has
+  // completed. New Credit entries now survive across sessions.
   try {
-    db.prepare('UPDATE incomes SET received_amount = amount WHERE received_amount = 0 AND amount > 0').run();
+    db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('incomes_received_backfilled', '1')").run();
   } catch (_e) { /* idempotent */ }
 
   // One-time backfill: existing advances with adjusted_in_run_id NOT NULL represent
@@ -965,10 +973,22 @@ function bumpQuoteNumber() {
 //   "16"                     → 16     (scalar)
 //   blank                    → 1      (no multiplier)
 // Separators: x/X/*/× within a group; + between groups (sums them).
+// Kept in lock-step with src/utils/sizeExpr.js — accepts any arithmetic
+// expression (5x5, 10-2, (5+3)*2, ...) and falls back to legacy sum-of-
+// products parsing for edge cases the whitelisted evaluator rejects.
 function parseSize(size) {
   if (size == null || size === '') return 1;
-  const s = String(size).trim().toLowerCase();
-  const groups = s.split('+').map((g) => g.trim()).filter(Boolean);
+  const raw = String(size).trim().toLowerCase();
+  if (!raw) return 1;
+  const normalized = raw.replace(/[x×]/g, '*');
+  if (/^[0-9.+\-*/()\s]+$/.test(normalized)) {
+    try {
+      // eslint-disable-next-line no-new-func
+      const val = Function(`"use strict"; return (${normalized});`)();
+      if (typeof val === 'number' && Number.isFinite(val) && val > 0) return val;
+    } catch (_e) { /* fall through */ }
+  }
+  const groups = raw.split('+').map((g) => g.trim()).filter(Boolean);
   let sum = 0;
   let anyGroupParsed = false;
   for (const g of groups) {
@@ -978,8 +998,8 @@ function parseSize(size) {
       anyGroupParsed = true;
     }
   }
-  if (anyGroupParsed) return sum;
-  const n = Number(s);
+  if (anyGroupParsed && sum > 0) return sum;
+  const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
 

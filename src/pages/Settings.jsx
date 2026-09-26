@@ -3,6 +3,9 @@ import PageHeader from '../components/PageHeader.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { assetUrl } from '../utils/asset.js';
+import {
+  getExportFolder, pickExportFolder, clearExportFolder, isSupported as isExportFolderSupported,
+} from '../utils/exportFolder.js';
 
 const Field = ({ label, children }) => (
   <div>
@@ -18,10 +21,29 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
 
   const [pw, setPw] = useState({ old: '', next: '', confirm: '' });
+  const [exportFolder, setExportFolder] = useState(null);
+  const exportFolderSupported = isExportFolderSupported();
 
   useEffect(() => {
     window.api.settings.get().then(setS);
+    getExportFolder().then(setExportFolder);
   }, []);
+
+  const chooseExportFolder = async () => {
+    try {
+      const handle = await pickExportFolder();
+      setExportFolder(handle);
+      toast.success(`Exports will go to "${handle.name}/quotations/"`);
+    } catch (e) {
+      if (e?.name === 'AbortError') return; // user cancelled the picker
+      toast.error(e.message || 'Could not set the export folder');
+    }
+  };
+  const forgetExportFolder = async () => {
+    await clearExportFolder();
+    setExportFolder(null);
+    toast.success('Export folder cleared — PDFs will download normally');
+  };
 
   if (!s) return <div className="text-slate-500">Loading…</div>;
 
@@ -243,6 +265,39 @@ export default function Settings() {
               Preview: <code className="bg-slate-100 px-2 py-0.5 rounded">
                 {(s.quote_prefix || '')}{String(s.quote_next_number || 1).padStart(Number(s.quote_number_padding || 4), '0')}
               </code>
+            </div>
+          </div>
+        </div>
+
+        <div className="card lg:col-span-2">
+          <div className="card-header">
+            <div className="card-title">Quotation export folder</div>
+          </div>
+          <div className="card-body space-y-3">
+            <p className="text-sm text-slate-600">
+              Pick a folder on this device where every exported quotation / invoice PDF should be saved.
+              The app will create a <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs">quotations/</code> subfolder inside it
+              and drop files there — no more per-download Save-As dialog.
+            </p>
+            {!exportFolderSupported ? (
+              <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                This browser doesn't support choosing a folder (needs Chrome or Edge on HTTPS).
+                PDFs will save to the browser's default Downloads folder.
+              </div>
+            ) : exportFolder ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex-1 min-w-[200px] text-sm">
+                  Currently saving to&nbsp;
+                  <strong className="text-brand-700">{exportFolder.name}/quotations/</strong>
+                </div>
+                <button className="btn-secondary text-sm" onClick={chooseExportFolder}>Change folder</button>
+                <button className="btn-ghost text-sm text-red-600" onClick={forgetExportFolder}>Clear</button>
+              </div>
+            ) : (
+              <button className="btn-primary" onClick={chooseExportFolder}>Choose folder…</button>
+            )}
+            <div className="text-xs text-slate-500">
+              The folder handle is remembered per-browser. If you clear browser data or switch browsers, you'll need to pick it again.
             </div>
           </div>
         </div>

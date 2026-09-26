@@ -74,7 +74,10 @@ export default function QuotationView() {
   const exportPdf = async () => {
     try {
       const res = await window.api.pdf.export(q.id);
-      if (!res.canceled) toast.success('PDF saved');
+      if (res.canceled) return;
+      toast.success(res.savedToFolder
+        ? `Saved to your quotations folder — ${res.filename}`
+        : 'PDF downloaded');
     } catch (e) {
       toast.error(e.message);
     }

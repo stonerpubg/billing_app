@@ -261,13 +261,21 @@ export default function PdfHtmlMock({ values, settings, quotation, selected, onS
   const effShowCgst = showCgst && !flatMode;
   const effShowSgst = showSgst && !flatMode;
 
-  // Parse size like the backend
+  // Parse size like the backend — accepts any arithmetic expression
+  // (5x5, 4x4x6, 10-2, (5+3)*2), matching src/utils/sizeExpr.js.
   const parseSize = (size) => {
     if (size == null || size === '') return 1;
-    const s = String(size).trim().toLowerCase();
-    const m = s.match(/^(\d+(?:\.\d+)?)\s*[x*×]\s*(\d+(?:\.\d+)?)$/);
-    if (m) return Number(m[1]) * Number(m[2]);
-    const n = Number(s);
+    const raw = String(size).trim().toLowerCase();
+    if (!raw) return 1;
+    const normalized = raw.replace(/[x×]/g, '*');
+    if (/^[0-9.+\-*/()\s]+$/.test(normalized)) {
+      try {
+        // eslint-disable-next-line no-new-func
+        const val = Function(`"use strict"; return (${normalized});`)();
+        if (typeof val === 'number' && Number.isFinite(val) && val > 0) return val;
+      } catch (_e) { /* fall through */ }
+    }
+    const n = Number(raw);
     return Number.isFinite(n) && n > 0 ? n : 1;
   };
 

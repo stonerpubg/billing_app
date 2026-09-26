@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import PageHeader from '../components/PageHeader.jsx';
 import { inr, money, today } from '../utils/format.js';
 import { useToast } from '../context/ToastContext.jsx';
+import { parseSize } from '../utils/sizeExpr.js';
 
 const emptyItem = () => ({
   product_id: null,
@@ -17,25 +18,6 @@ const emptyItem = () => ({
   rate: 0,
   gst_rate: 18,
 });
-
-// Parse size: "4x4" → 16, "4x4x4" → 64, "17.25x4.5+12.5x4.55" → 134.5, "16" → 16, blank → 1
-function parseSize(size) {
-  if (size == null || size === '') return 1;
-  const s = String(size).trim().toLowerCase();
-  const groups = s.split('+').map((g) => g.trim()).filter(Boolean);
-  let sum = 0;
-  let anyGroupParsed = false;
-  for (const g of groups) {
-    const parts = g.split(/\s*[x*×]\s*/).filter(Boolean);
-    if (parts.length >= 1 && parts.every((p) => /^\d+(?:\.\d+)?$/.test(p))) {
-      sum += parts.reduce((prod, p) => prod * Number(p), 1);
-      anyGroupParsed = true;
-    }
-  }
-  if (anyGroupParsed) return sum;
-  const n = Number(s);
-  return Number.isFinite(n) && n > 0 ? n : 1;
-}
 
 // Weight cell → numeric value (accepts "317.6" or "317.6 kg"). Zero if blank.
 function parseWeight(weight) {
@@ -310,14 +292,15 @@ export default function InvoiceEditor() {
           <button className="btn-secondary text-xs" onClick={addRow}>+ Add row</button>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1620px] table-fixed">
+          <table className="w-full min-w-[1700px] table-fixed">
             <thead>
               <tr>
                 <th className="th w-[190px]">Product</th>
                 <th className="th min-w-[160px]">Description</th>
                 <th className="th w-[90px]">HSN / SAC</th>
                 <th className="th w-[70px] text-center">Unit</th>
-                <th className="th w-[150px] text-center" title="4x4=16 · 4x4x6=96 · 17.25x4.5+12.5x4.55=134.5">Size</th>
+                <th className="th w-[150px] text-center" title="Any expression: 4x4=16 · 4x4x6=96 · 10-2=8 · (5+3)*2=16. Uses full arithmetic.">Size</th>
+                <th className="th w-[70px] text-right" title="Computed value of the Size expression, in square-feet.">SQ FT</th>
                 <th className="th w-[110px] text-right" title="kg / ton value. Toggle Price-by below to bill by weight.">Weight</th>
                 <th className="th w-[90px] text-right">Qty</th>
                 <th className="th w-[100px] text-right">Rate</th>
@@ -368,12 +351,14 @@ export default function InvoiceEditor() {
                     </td>
                     <td className="td">
                       <input className="input py-2 text-sm text-center w-full"
-                        placeholder="4x4  or  17.25x4.5+12.5x4.55"
-                        title="Single: 4x4=16 · Volume: 4x4x6=96 · Multi-face: 17.25x4.5+12.5x4.55=134.5 (sum of areas)"
+                        placeholder="4x4  or  10-2  or  (5+3)*2"
+                        title="Any expression: 4x4=16 · 4x4x6=96 · 10-2=8 · (5+3)*2=16. Multiplies with Qty × Rate."
                         value={it.size} onChange={(e) => updateItem(idx, { size: e.target.value })} />
-                      {it.size && sizeMult !== 1 && (
-                        <div className="text-[10px] text-slate-500 text-center mt-0.5">= {sizeMult % 1 === 0 ? sizeMult : sizeMult.toFixed(3)}</div>
-                      )}
+                    </td>
+                    <td className="td">
+                      <div className="text-sm text-right tabular-nums text-slate-700 pr-1">
+                        {it.size ? (sizeMult % 1 === 0 ? sizeMult : sizeMult.toFixed(3)) : '—'}
+                      </div>
                     </td>
                     <td className="td">
                       <input

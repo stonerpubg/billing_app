@@ -1,6 +1,37 @@
 // HTTP shim that mimics window.api (the Electron preload bridge) using fetch,
 // so the same React code runs in the Electron desktop app AND in a web browser.
 
+import { saveBlobToExportFolder } from '../utils/exportFolder.js';
+
+// Server-generated PDFs — try the user's chosen export folder first (File
+// System Access API), else fall back to the normal browser download.
+async function downloadPdf(url, fallbackFilename, subfolder) {
+  const res = await fetch(url, { credentials: 'include' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Download failed (${res.status})`);
+  }
+  // Prefer the server-suggested filename from Content-Disposition.
+  let filename = fallbackFilename;
+  const cd = res.headers.get('content-disposition') || '';
+  const m = cd.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
+  if (m) filename = decodeURIComponent(m[1].replace(/"$/, ''));
+  const blob = await res.blob();
+  try {
+    const saved = await saveBlobToExportFolder(blob, filename, subfolder);
+    if (saved) return { canceled: false, savedToFolder: true, filename };
+  } catch (_e) { /* fall through to browser download */ }
+  const objUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(objUrl), 30_000);
+  return { canceled: false, savedToFolder: false, filename };
+}
+
 async function req(method, path, body) {
   const opts = {
     method,
@@ -205,24 +236,12 @@ export function createHttpApi() {
     pdf: {
       preview: (id) => req('GET', `/pdf/preview/${id}`),
       export: async (id) => {
-        const link = document.createElement('a');
-        link.href = `/api/pdf/export/${id}`;
-        link.download = '';
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        return { canceled: false };
+        return await downloadPdf(`/api/pdf/export/${id}`, `Quotation-${id}.pdf`, 'quotations');
       },
       designerPreview: (patch) => req('POST', '/pdf/designer-preview', patch),
       previewInvoice: (id) => req('GET', `/pdf/preview-invoice/${id}`),
       exportInvoice: async (id) => {
-        const link = document.createElement('a');
-        link.href = `/api/pdf/export-invoice/${id}`;
-        link.download = '';
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        return { canceled: false };
+        return await downloadPdf(`/api/pdf/export-invoice/${id}`, `Invoice-${id}.pdf`, 'quotations');
       },
     },
     dialog: {
