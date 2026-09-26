@@ -3032,7 +3032,12 @@ function vendorReport(filters = {}) {
 }
 
 function advancesOutstanding() {
-  // Outstanding per advance = amount - SUM(advance_deductions.amount). Rolls up to per-employee.
+  // Display outstanding = amount - SUM(deductions from PAID payroll entries).
+  // A deduction that was scheduled by a generated-but-unpaid payroll must NOT
+  // count as recovery yet — the money hasn't actually reduced the advance
+  // until the employee is paid. FIFO logic elsewhere still counts all
+  // deductions to prevent double-scheduling; only user-facing outstanding
+  // filters by paid.
   const rows = db.prepare(
     `SELECT e.id, e.name, e.code,
             COALESCE(SUM(a.amount - COALESCE(dsum.deducted, 0)), 0) AS outstanding,
@@ -3040,8 +3045,13 @@ function advancesOutstanding() {
             MIN(CASE WHEN (a.amount - COALESCE(dsum.deducted, 0)) > 0.001 THEN a.advance_date END) AS oldest_date
        FROM employees e
        JOIN advances a ON a.employee_id = e.id
-       LEFT JOIN (SELECT advance_id, SUM(amount) AS deducted FROM advance_deductions GROUP BY advance_id) dsum
-              ON dsum.advance_id = a.id
+       LEFT JOIN (
+         SELECT d.advance_id, SUM(d.amount) AS deducted
+           FROM advance_deductions d
+           JOIN payroll_entries pe ON pe.run_id = d.run_id AND pe.employee_id = d.employee_id
+          WHERE pe.paid = 1
+          GROUP BY d.advance_id
+       ) dsum ON dsum.advance_id = a.id
       GROUP BY e.id
       HAVING outstanding > 0
       ORDER BY outstanding DESC`
@@ -4096,8 +4106,13 @@ function listAdvances(filters = {}) {
        FROM advances a
        JOIN employees e ON e.id = a.employee_id
        LEFT JOIN payroll_runs r ON r.id = a.adjusted_in_run_id
-       LEFT JOIN (SELECT advance_id, SUM(amount) AS deducted FROM advance_deductions GROUP BY advance_id) dsum
-              ON dsum.advance_id = a.id`
+       LEFT JOIN (
+         SELECT d.advance_id, SUM(d.amount) AS deducted
+           FROM advance_deductions d
+           JOIN payroll_entries pe ON pe.run_id = d.run_id AND pe.employee_id = d.employee_id
+          WHERE pe.paid = 1
+          GROUP BY d.advance_id
+       ) dsum ON dsum.advance_id = a.id`
     + (where.length ? ' WHERE ' + where.join(' AND ') : '')
     + ' ORDER BY a.advance_date DESC, a.id DESC';
   return db.prepare(sql).all(params);
@@ -4157,13 +4172,18 @@ function deleteAdvance(id) {
 
 function employeeAdvanceSummary(employeeId) {
   const total = db.prepare('SELECT COALESCE(SUM(amount), 0) AS s FROM advances WHERE employee_id = ?').get(employeeId).s;
-  // Outstanding = SUM over each advance of (amount - deducted-so-far). Deductions come from
-  // advance_deductions table (each row = one partial recovery in a specific payroll run).
+  // Outstanding shown to the user only counts deductions from PAID payroll
+  // entries — unpaid runs don't reduce the balance yet.
   const outstanding = db.prepare(
     `SELECT COALESCE(SUM(a.amount - COALESCE(d.deducted, 0)), 0) AS s
        FROM advances a
-       LEFT JOIN (SELECT advance_id, SUM(amount) AS deducted FROM advance_deductions GROUP BY advance_id) d
-              ON d.advance_id = a.id
+       LEFT JOIN (
+         SELECT dd.advance_id, SUM(dd.amount) AS deducted
+           FROM advance_deductions dd
+           JOIN payroll_entries pe ON pe.run_id = dd.run_id AND pe.employee_id = dd.employee_id
+          WHERE pe.paid = 1
+          GROUP BY dd.advance_id
+       ) d ON d.advance_id = a.id
       WHERE a.employee_id = ?`
   ).get(employeeId).s;
   return { total: +total.toFixed(2), outstanding: +outstanding.toFixed(2) };

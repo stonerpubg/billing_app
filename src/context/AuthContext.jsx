@@ -46,9 +46,16 @@ export function AuthProvider({ children }) {
       isAdmin: user?.role === 'admin',
       isReady: checked,
       async login(username, password) {
-        const res = await window.api.auth.login({ username, password });
-        if (res.ok) setUser(res.user);
-        return res;
+        // The web HTTP shim throws on 4xx (e.g. bad credentials), which
+        // otherwise bubbles up as an unhandled promise rejection to the
+        // Login form. Turn it into the { ok, error } shape callers expect.
+        try {
+          const res = await window.api.auth.login({ username, password });
+          if (res?.ok) setUser(res.user);
+          return res;
+        } catch (e) {
+          return { ok: false, error: e?.message || 'Login failed' };
+        }
       },
       async logout() {
         // In web mode, tell the server to destroy the session cookie
