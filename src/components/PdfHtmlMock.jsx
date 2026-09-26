@@ -286,6 +286,7 @@ export default function PdfHtmlMock({ values, settings, quotation, selected, onS
     (showHsn ? 1 : 0) +
     (showUnit ? 1 : 0) +
     (anySize ? 1 : 0) +
+    (anySize ? 1 : 0) + // sqft column mirrors size visibility
     1 + // qty
     1 + // rate
     (showTaxable ? 1 : 0) +
@@ -704,6 +705,7 @@ export default function PdfHtmlMock({ values, settings, quotation, selected, onS
                     {showHsn && <th data-region="col_hsn" onClick={colClick('col_hsn')} style={thStyle('col_hsn', { textAlign: 'center' })}>HSN/SAC</th>}
                     {showUnit && <th data-region="col_unit" onClick={colClick('col_unit')} style={thStyle('col_unit', { textAlign: 'center' })}>Unit</th>}
                     {anySize && <th data-region="col_size" onClick={colClick('col_size')} style={thStyle('col_size', { textAlign: 'center' })}>Size</th>}
+                    {anySize && <th data-region="col_sqft" onClick={colClick('col_sqft')} style={thStyle('col_sqft', { textAlign: 'right' })}>SQ FT</th>}
                     <th data-region="col_qty" onClick={colClick('col_qty')} style={thStyle('col_qty', { textAlign: 'right' })}>Qty</th>
                     <th data-region="col_rate" onClick={colClick('col_rate')} style={thStyle('col_rate', { textAlign: 'right' })}>Rate</th>
                     {showTaxable && <th data-region="col_taxable" onClick={colClick('col_taxable')} style={thStyle('col_taxable', { textAlign: 'right' })}>Taxable</th>}
@@ -726,7 +728,12 @@ export default function PdfHtmlMock({ values, settings, quotation, selected, onS
                       {showUnit && <td style={{ padding: cellPad, fontSize: fontItems, textAlign: 'center', border: `0.5px solid ${border}` }}>{it.unit}</td>}
                       {anySize && (
                         <td style={{ padding: cellPad, fontSize: fontItems, textAlign: 'center', border: `0.5px solid ${border}` }}>
-                          {it.size ? (<>{it.size}{sizeMult !== 1 && (<div style={{ fontSize: fontItemsXs, color: muted }}>{'= ' + sizeMult}</div>)}</>) : '—'}
+                          {it.size || '—'}
+                        </td>
+                      )}
+                      {anySize && (
+                        <td style={{ padding: cellPad, fontSize: fontItems, textAlign: 'right', border: `0.5px solid ${border}` }}>
+                          {it.size ? (sizeMult % 1 === 0 ? sizeMult : sizeMult.toFixed(2)) : '—'}
                         </td>
                       )}
                       <td style={{ padding: cellPad, fontSize: fontItems, textAlign: 'right', border: `0.5px solid ${border}` }}>{money(it.quantity)}</td>

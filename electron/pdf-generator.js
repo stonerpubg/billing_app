@@ -54,6 +54,36 @@ function safe(s) {
   return s == null ? '' : String(s);
 }
 
+// Kept in lock-step with src/utils/sizeExpr.js — evaluates the size cell as
+// an arithmetic expression (5x5, 4x4x6, 10-2, (5+3)*2) and falls back to
+// legacy sum-of-products for anything the whitelisted evaluator rejects.
+function parseSize(size) {
+  if (size == null || size === '') return 1;
+  const raw = String(size).trim().toLowerCase();
+  if (!raw) return 1;
+  const normalized = raw.replace(/[x×]/g, '*');
+  if (/^[0-9.+\-*/()\s]+$/.test(normalized)) {
+    try {
+      // eslint-disable-next-line no-new-func
+      const val = Function(`"use strict"; return (${normalized});`)();
+      if (typeof val === 'number' && Number.isFinite(val) && val > 0) return val;
+    } catch (_e) { /* fall through */ }
+  }
+  const groups = raw.split('+').map((g) => g.trim()).filter(Boolean);
+  let sum = 0;
+  let anyGroupParsed = false;
+  for (const g of groups) {
+    const parts = g.split(/\s*[x*×]\s*/).filter(Boolean);
+    if (parts.length >= 1 && parts.every((p) => /^\d+(?:\.\d+)?$/.test(p))) {
+      sum += parts.reduce((prod, p) => prod * Number(p), 1);
+      anyGroupParsed = true;
+    }
+  }
+  if (anyGroupParsed && sum > 0) return sum;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
 // Roboto / Helvetica (pdfmake built-ins) do not include U+20B9 (₹).
 // Replace with "Rs. " for anything that will render into the PDF so we don't
 // get the placeholder glyph ("1"/box) that we saw in reports.
@@ -372,6 +402,7 @@ function buildQuotationPdf(q, s) {
   if (D.showHsn) columns.push('hsn');
   if (D.showUnit) columns.push('unit');
   if (anySize) columns.push('size');
+  if (anySize) columns.push('sqft');
   if (anyWeight) columns.push('weight');
   columns.push('qty');
   columns.push('rate');
@@ -388,6 +419,7 @@ function buildQuotationPdf(q, s) {
     qty: { text: 'Qty', style: 'thHead', alignment: 'right' },
     unit: { text: 'Unit', style: 'thHead', alignment: 'center' },
     size: { text: 'Size', style: 'thHead', alignment: 'center' },
+    sqft: { text: 'SQ FT', style: 'thHead', alignment: 'right' },
     weight: { text: 'Weight', style: 'thHead', alignment: 'right' },
     rate: { text: 'Rate', style: 'thHead', alignment: 'right' },
     taxable: { text: 'Taxable', style: 'thHead', alignment: 'right' },
@@ -398,12 +430,12 @@ function buildQuotationPdf(q, s) {
   const columnWidth = {
     // Size widened so single sizes like "17.25x4.5" fit on ONE line.
     // Multi-face sizes ("AxB+CxD") render as a vertical stack so they wrap cleanly on the '+'.
-    sno: 14, desc: '*', hsn: 38, qty: 28, unit: 24, size: 60, weight: 48, rate: 42, taxable: 48, cgst: 38, sgst: 38, total: 72,
+    sno: 14, desc: '*', hsn: 36, qty: 26, unit: 22, size: 54, sqft: 30, weight: 44, rate: 40, taxable: 46, cgst: 36, sgst: 36, total: 68,
   };
   // Per-line GST adds two columns; keep numeric cells compact so long product
   // descriptions still have room inside the A4 printable width.
   if (!flatMode && D.showCgst && D.showSgst) {
-    Object.assign(columnWidth, { sno: 12, hsn: 32, qty: 24, unit: 22, size: 48, weight: 40, rate: 38, taxable: 44, cgst: 34, sgst: 34, total: 58 });
+    Object.assign(columnWidth, { sno: 12, hsn: 30, qty: 22, unit: 20, size: 44, sqft: 26, weight: 36, rate: 36, taxable: 42, cgst: 32, sgst: 32, total: 54 });
   }
 
   // Render the Size cell. Single-group ("17.25x4.5") stays on one line.
@@ -447,6 +479,15 @@ function buildQuotationPdf(q, s) {
       qty: { text: money(it.quantity), style: 'tdBody', alignment: 'right' },
       unit: { text: safe(it.unit), style: 'tdBody', alignment: 'center' },
       size: sizeCell(it.size),
+      sqft: {
+        text: (() => {
+          const v = parseSize(it.size);
+          if (!it.size || v === 1) return '—';
+          return v % 1 === 0 ? String(v) : v.toFixed(2);
+        })(),
+        style: 'tdBody',
+        alignment: 'right',
+      },
       weight: { text: safe(it.weight) || '—', style: 'tdBody', alignment: 'right' },
       rate: { text: money(it.rate), style: 'tdBody', alignment: 'right' },
       taxable: { text: money(it.amount), style: 'tdBody', alignment: 'right' },

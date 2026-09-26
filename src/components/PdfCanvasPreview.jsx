@@ -56,8 +56,10 @@ export default function PdfCanvasPreview({ base64, className = '' }) {
           canvas.style.background = '#ffffff';
           canvas.style.borderRadius = '2px';
 
-          const ctx = canvas.getContext('2d');
-          await page.render({ canvasContext: ctx, viewport }).promise;
+          // pdfjs v5 recommends passing `canvas` (the element) over
+          // `canvasContext`; the legacy path throws internal "toHex is not
+          // a function" on some color paths in v5.6+.
+          await page.render({ canvas, viewport }).promise;
           if (token !== renderTokenRef.current) return;
           newElems.push(canvas);
         }
