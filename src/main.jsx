@@ -1,3 +1,4 @@
+import './utils/uint8ArrayPolyfill.js'; // must load before pdfjs
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { HashRouter, BrowserRouter } from 'react-router-dom';
